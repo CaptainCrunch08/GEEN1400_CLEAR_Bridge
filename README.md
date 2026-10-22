@@ -6,7 +6,7 @@ The current device is an Elecrow CrowPanel 5.0 inch display. The ESP32-S3 is alr
 
 ## What the student sees
 
-The panel opens with “Hi, Connor” and then **How do you feel?**
+The panel opens with a greeting, then **How do you feel?** The first time it is programmed, the greeting is “Hi, Connor.” A teacher can change that name in settings.
 
 - Worried
 - Bored
@@ -19,7 +19,19 @@ Each feeling opens a list of responses.
 - **Green / Try this** is something the student can do alone, such as breathing, counting to 10, or a quiet looking game. The next screen gives the steps.
 - **Orange / Ask teacher** is a request, such as a short walk, talking with someone, a clearer explanation, or an example. The screen says the teacher can say yes or no. The teacher phone app is not connected yet, so nothing is actually sent.
 
-**Back** returns to the previous list.
+**Back** returns to the previous list. On those screens it sits just left of the settings gear.
+
+## Settings
+
+A gear button in the top right opens settings. It is on the greeting, the feelings list, each response list, and the chosen response. The greeting only stays up for about two seconds, so the reliable place to tap the gear is the feelings list.
+
+Settings has three controls:
+
+- **Student name.** **Change** opens a keyboard. **Save** keeps the name, and **Back** leaves it as it was. **Done** then shows the greeting again so the new name can be checked. The first letter of each word is capitalized. The name can be up to 16 characters.
+- **Brightness.** The screen can be set from 20% to 100%, in steps of 10. Use **−**, **+**, or tap the bar. It does not turn all the way off.
+- **Grade level.** Kindergarten, Grade 1, Grades 2–4, and Grade 5 are listed. Grades 2–4 is the screen students see now, marked **In use**. The other three are placeholders for later layouts. Selecting one saves the choice and marks it **Placeholder**. The feelings screens do not change.
+
+The name, brightness, and grade choice are stored on the board and come back after a restart. `Preferences.h` is part of the ESP32 board package. Nothing extra needs to be installed for that.
 
 ## Teacher connection
 
@@ -48,7 +60,7 @@ Libraries, from the Arduino Library Manager:
 - LovyanGFX 1.2 or later. The sketch includes the RGB panel headers directly, because that version does not expose them from `LovyanGFX.hpp`.
 - RemoteXY 4.1.10 or later
 
-`WiFi.h` and `Wire.h` come with the ESP32 board package. Install **esp32 by Espressif Systems** from the Boards Manager.
+`WiFi.h`, `Wire.h`, and `Preferences.h` come with the ESP32 board package. Install **esp32 by Espressif Systems** from the Boards Manager.
 
 Program the board through the USB-C port on the display. The CrowPanel uses a CH340 USB chip. If no COM port appears, install the WCH CH340 driver and use a USB cable that carries data, not a charge-only cable. In Device Manager the port should show as **USB-SERIAL CH340 (COMx)**. If upload stays on “Connecting…”, hold **BOOT**, tap **RST**, and release **BOOT**.
 
