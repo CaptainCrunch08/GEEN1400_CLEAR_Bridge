@@ -17,6 +17,10 @@
 
   Green buttons are something the student can try.
   Orange buttons ask the teacher, for approval on the phone later.
+
+  The gear in the top right opens settings. A teacher can change the
+  name on the startup screen, the brightness, and the grade-level look.
+  Grades 2-4 is the screen students see. The other grades are placeholders.
 */
 
 #define REMOTEXY_MODE__WIFI_POINT
@@ -29,6 +33,7 @@
 
 #include <RemoteXY.h>
 #include <Wire.h>
+#include <Preferences.h>
 #include <LovyanGFX.hpp>
 #include <lgfx/v1/platforms/esp32s3/Panel_RGB.hpp>
 #include <lgfx/v1/platforms/esp32s3/Bus_RGB.hpp>
@@ -58,6 +63,7 @@ class LGFX : public lgfx::LGFX_Device {
   lgfx::Bus_RGB _bus_instance;
   lgfx::Panel_RGB _panel_instance;
   lgfx::Touch_GT911 _touch_instance;
+  lgfx::Light_PWM _light_instance;
 
 public:
   LGFX(void) {
@@ -126,6 +132,15 @@ public:
       _touch_instance.config(cfg);
       _panel_instance.setTouch(&_touch_instance);
     }
+    {
+      auto cfg = _light_instance.config();
+      cfg.pin_bl = 2;
+      cfg.freq = 20000;
+      cfg.pwm_channel = 7;
+      cfg.invert = false;
+      _light_instance.config(cfg);
+      _panel_instance.setLight(&_light_instance);
+    }
     _panel_instance.setBus(&_bus_instance);
     setPanel(&_panel_instance);
   }
@@ -140,16 +155,74 @@ static const int SCREEN_HELLO = 0;
 static const int SCREEN_MENU = 1;
 static const int SCREEN_SUBMENU = 2;
 static const int SCREEN_SELECTED = 3;
+static const int SCREEN_SETTINGS = 4;
+static const int SCREEN_NAME = 5;
 
 static const int ROW_X = 24;
 static const int ROW_W = 752;
 static const int ROW_GAP = 6;
 static const int LIST_TOP = 64;
 static const int LIST_BOTTOM = 412;
-static const int BACK_X = 600;
-static const int BACK_Y = 12;
-static const int BACK_W = 176;
-static const int BACK_H = 40;
+static const int GEAR_W = 56;
+static const int GEAR_H = 44;
+static const int GEAR_X = 800 - 12 - GEAR_W;
+static const int GEAR_Y = 8;
+static const int BACK_W = 140;
+static const int BACK_H = 44;
+static const int BACK_X = GEAR_X - 8 - BACK_W;
+static const int BACK_Y = 8;
+static const int DONE_W = 140;
+static const int DONE_H = 44;
+static const int DONE_X = 800 - 12 - DONE_W;
+static const int DONE_Y = 8;
+static const int NAME_BACK_W = 140;
+static const int NAME_BACK_H = 44;
+static const int NAME_BACK_X = DONE_X - 8 - NAME_BACK_W;
+static const int NAME_BACK_Y = 8;
+
+static const int NAME_MAX = 16;
+static const int NAME_Y = 60;
+static const int NAME_H = 56;
+static const int CHANGE_W = 128;
+static const int CHANGE_H = 40;
+static const int CHANGE_X = ROW_X + ROW_W - 12 - CHANGE_W;
+static const int CHANGE_Y = NAME_Y + 8;
+
+static const int BRIGHT_LABEL_Y = 126;
+static const int BRIGHT_Y = 148;
+static const int BRIGHT_H = 48;
+static const int STEP_W = 56;
+static const int MINUS_X = 24;
+static const int PLUS_X = ROW_X + ROW_W - STEP_W;
+static const int PCT_W = 72;
+static const int PCT_X = PLUS_X - 8 - PCT_W;
+static const int BAR_X = MINUS_X + STEP_W + 8;
+static const int BAR_W = PCT_X - 8 - BAR_X;
+static const int BRIGHT_MIN = 20;
+static const int BRIGHT_MAX = 100;
+
+static const int GRADE_NOTE_Y = 206;
+static const int GRADE_TOP = 230;
+static const int GRADE_H = 56;
+static const int GRADE_GAP = 6;
+static const int GRADE_COUNT = 4;
+static const int GRADE_LIVE = 2;
+
+static const int FIELD_X = 24;
+static const int FIELD_Y = 68;
+static const int FIELD_W = 752;
+static const int FIELD_H = 64;
+static const int KEY_LEFT = 16;
+static const int KEY_AREA_W = 768;
+static const int KEY_TOP = 148;
+static const int KEY_H = 62;
+static const int KEY_GAP = 8;
+static const int KEY_MAX = 32;
+
+static const int KEY_CHAR = 1;
+static const int KEY_BACKSPACE = 2;
+static const int KEY_CLEAR = 3;
+static const int KEY_SPACE = 4;
 
 static const uint16_t COL_BG = 0xF7BD;
 static const uint16_t COL_FG = 0x2610;
@@ -157,6 +230,20 @@ static const uint16_t COL_ROW = 0x6F5F;
 static const uint16_t COL_TRY = 0x6F9B;
 static const uint16_t COL_ASK = 0xFE70;
 static const uint16_t COL_FOOT = 0xE73C;
+
+struct GradeOption {
+  const char *label;
+  const char *about;
+  bool live;
+};
+
+// Stored for a later screen swap. Only Grades 2-4 is drawn for students today.
+static const GradeOption gradeOptions[] = {
+  {"Kindergarten", "Pictures and very few words", false},
+  {"Grade 1", "Big letters and few buttons", false},
+  {"Grades 2-4", "Short sentences, this screen", true},
+  {"Grade 5", "More reading, smaller type", false}
+};
 
 struct Choice {
   const char *label;
@@ -212,17 +299,33 @@ static const int understandingCount = 5;
 static const int angerCount = 5;
 static const int uncomfortableCount = 4;
 
+struct KeyHit {
+  int action;
+  char ch;
+  int x;
+  int y;
+  int w;
+  int h;
+};
+
 static LGFX lcd;
+static Preferences prefs;
 static bool expanderOk = false;
 static int currentScreen = SCREEN_HELLO;
+static int returnScreen = SCREEN_MENU;
 static int selectedMenu = 0;
 static int submenuPos = 0;
 static unsigned long screenMs = 0;
 static unsigned long tapMs = 0;
 static bool touchWasDown = false;
+static bool nameDirty = false;
 static uint8_t shownConnect = 0xFF;
 static uint8_t shownSwitch = 0xFF;
 static uint8_t shownOption = 0xFF;
+static char studentName[NAME_MAX + 1] = "Connor";
+static char nameEdit[NAME_MAX + 1] = "Connor";
+static int brightnessPct = 80;
+static int gradeLevel = GRADE_LIVE;
 
 static bool pcaWrite(uint8_t reg, uint8_t value) {
   Wire.beginTransmission(PCA9557_ADDR);
@@ -245,11 +348,74 @@ static void initExpander() {
   pcaWrite(0x03, 0x02);
 }
 
-static void setBacklight(bool on) {
-  digitalWrite(PIN_BL, on ? HIGH : LOW);
-  if (expanderOk) {
-    pcaWrite(0x01, on ? 0x01 : 0x00);
+static void copyName(char *dest, const char *src) {
+  int i = 0;
+  while (src[i] && i < NAME_MAX) {
+    dest[i] = src[i];
+    i++;
   }
+  dest[i] = 0;
+}
+
+static int dutyForBrightness(int pct) {
+  if (pct < BRIGHT_MIN) {
+    pct = BRIGHT_MIN;
+  }
+  if (pct > BRIGHT_MAX) {
+    pct = BRIGHT_MAX;
+  }
+  return 50 + (205 * (pct - BRIGHT_MIN)) / (BRIGHT_MAX - BRIGHT_MIN);
+}
+
+static void applyBrightness() {
+  lcd.setBrightness(dutyForBrightness(brightnessPct));
+  if (expanderOk) {
+    pcaWrite(0x01, 0x01);
+  }
+}
+
+static void loadSettings() {
+  prefs.begin("clear", true);
+  String stored = prefs.getString("name", "Connor");
+  brightnessPct = prefs.getInt("bright", 80);
+  gradeLevel = prefs.getInt("grade", GRADE_LIVE);
+  prefs.end();
+
+  int n = 0;
+  for (int i = 0; i < stored.length() && n < NAME_MAX; i++) {
+    char c = stored.charAt(i);
+    bool letter = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+    bool mark = (c == ' ' || c == '-' || c == '\'');
+    if (!letter && !mark) {
+      continue;
+    }
+    if (c == ' ' && n == 0) {
+      continue;
+    }
+    studentName[n++] = c;
+  }
+  studentName[n] = 0;
+  if (studentName[0] == 0) {
+    copyName(studentName, "Connor");
+  }
+  if (brightnessPct < BRIGHT_MIN) {
+    brightnessPct = BRIGHT_MIN;
+  }
+  if (brightnessPct > BRIGHT_MAX) {
+    brightnessPct = BRIGHT_MAX;
+  }
+  brightnessPct = (brightnessPct / 10) * 10;
+  if (gradeLevel < 0 || gradeLevel >= GRADE_COUNT) {
+    gradeLevel = GRADE_LIVE;
+  }
+}
+
+static void saveSettings() {
+  prefs.begin("clear", false);
+  prefs.putString("name", studentName);
+  prefs.putInt("bright", brightnessPct);
+  prefs.putInt("grade", gradeLevel);
+  prefs.end();
 }
 
 static void paintChoice(uint8_t value, const char *one, const char *two, const char *three) {
@@ -321,12 +487,32 @@ static bool inBox(int32_t x, int32_t y, int boxX, int boxY, int boxW, int boxH) 
   return x >= boxX && x < boxX + boxW && y >= boxY && y < boxY + boxH;
 }
 
-static void paintBackButton() {
-  lcd.fillRoundRect(BACK_X, BACK_Y, BACK_W, BACK_H, 8, COL_ROW);
+static void paintTopButton(int x, int y, int w, int h, const char *label, uint16_t fill) {
+  lcd.fillRoundRect(x, y, w, h, 8, fill);
   lcd.setFont(&fonts::Font2);
   lcd.setTextDatum(textdatum_t::middle_center);
-  lcd.setTextColor(COL_FG, COL_ROW);
-  lcd.drawString("Back", BACK_X + BACK_W / 2, BACK_Y + BACK_H / 2);
+  lcd.setTextColor(COL_FG, fill);
+  lcd.drawString(label, x + w / 2, y + h / 2);
+}
+
+static void paintBackButton() {
+  paintTopButton(BACK_X, BACK_Y, BACK_W, BACK_H, "Back", COL_ROW);
+}
+
+static void paintGearButton() {
+  lcd.fillRoundRect(GEAR_X, GEAR_Y, GEAR_W, GEAR_H, 8, COL_ROW);
+  int cx = GEAR_X + GEAR_W / 2;
+  int cy = GEAR_Y + GEAR_H / 2;
+  lcd.fillCircle(cx, cy, 8, COL_FG);
+  lcd.fillRect(cx - 2, cy - 14, 4, 6, COL_FG);
+  lcd.fillRect(cx - 2, cy + 8, 4, 6, COL_FG);
+  lcd.fillRect(cx - 14, cy - 2, 6, 4, COL_FG);
+  lcd.fillRect(cx + 8, cy - 2, 6, 4, COL_FG);
+  lcd.fillRect(cx - 11, cy - 11, 5, 5, COL_FG);
+  lcd.fillRect(cx + 6, cy - 11, 5, 5, COL_FG);
+  lcd.fillRect(cx - 11, cy + 6, 5, 5, COL_FG);
+  lcd.fillRect(cx + 6, cy + 6, 5, 5, COL_FG);
+  lcd.fillCircle(cx, cy, 3, COL_ROW);
 }
 
 static void paintHello() {
@@ -334,10 +520,13 @@ static void paintHello() {
   lcd.setTextDatum(textdatum_t::middle_center);
   lcd.setFont(&fonts::Font4);
   lcd.setTextColor(COL_FG, COL_BG);
-  lcd.drawString("Hi, Connor", 400, 180);
+  char greeting[NAME_MAX + 8];
+  snprintf(greeting, sizeof(greeting), "Hi, %s", studentName);
+  lcd.drawString(greeting, 400, 180);
   lcd.setFont(&fonts::Font2);
   lcd.drawString("How do you feel?", 400, 240);
   paintStatus();
+  paintGearButton();
   lcd.setTextDatum(textdatum_t::top_left);
 }
 
@@ -355,6 +544,7 @@ static void paintMainMenu() {
     lcd.drawString(menu[i], ROW_X + 24, top + height / 2);
   }
   paintStatus();
+  paintGearButton();
   lcd.setTextDatum(textdatum_t::top_left);
 }
 
@@ -380,6 +570,7 @@ static void paintSubmenu() {
     lcd.drawString(choice->asksTeacher ? "Ask teacher" : "Try this", ROW_X + ROW_W - 16, top + height / 2);
   }
   paintStatus();
+  paintGearButton();
   lcd.setTextDatum(textdatum_t::top_left);
 }
 
@@ -442,7 +633,239 @@ static void paintSelected() {
   drawWrapped(choice->label, 24, 150, 752);
   drawWrapped(choice->help, 24, 210, 752);
   paintStatus();
+  paintGearButton();
   lcd.setTextDatum(textdatum_t::top_left);
+}
+
+static int gradeRowTop(int index) {
+  return GRADE_TOP + index * (GRADE_H + GRADE_GAP);
+}
+
+static void paintSettings() {
+  lcd.fillScreen(COL_BG);
+  lcd.setTextDatum(textdatum_t::middle_left);
+  lcd.setFont(&fonts::Font4);
+  lcd.setTextColor(COL_FG, COL_BG);
+  lcd.drawString("Settings", 24, 30);
+  paintTopButton(DONE_X, DONE_Y, DONE_W, DONE_H, "Done", COL_TRY);
+
+  lcd.fillRoundRect(ROW_X, NAME_Y, ROW_W, NAME_H, 12, COL_ROW);
+  lcd.setTextDatum(textdatum_t::middle_left);
+  lcd.setFont(&fonts::Font2);
+  lcd.setTextColor(COL_FG, COL_ROW);
+  lcd.drawString("Student", 44, NAME_Y + NAME_H / 2);
+  lcd.setFont(&fonts::Font4);
+  lcd.drawString(studentName, 160, NAME_Y + NAME_H / 2);
+  paintTopButton(CHANGE_X, CHANGE_Y, CHANGE_W, CHANGE_H, "Change", COL_TRY);
+
+  lcd.setTextDatum(textdatum_t::top_left);
+  lcd.setFont(&fonts::Font2);
+  lcd.setTextColor(COL_FG, COL_BG);
+  lcd.drawString("Brightness", 24, BRIGHT_LABEL_Y);
+  paintTopButton(MINUS_X, BRIGHT_Y, STEP_W, BRIGHT_H, "-", COL_ROW);
+  paintTopButton(PLUS_X, BRIGHT_Y, STEP_W, BRIGHT_H, "+", COL_ROW);
+  lcd.fillRoundRect(BAR_X, BRIGHT_Y + 8, BAR_W, BRIGHT_H - 16, 8, COL_FOOT);
+  int fillW = BAR_W * (brightnessPct - BRIGHT_MIN) / (BRIGHT_MAX - BRIGHT_MIN);
+  if (fillW < 0) {
+    fillW = 0;
+  }
+  if (fillW > BAR_W) {
+    fillW = BAR_W;
+  }
+  if (fillW > 0) {
+    lcd.fillRoundRect(BAR_X, BRIGHT_Y + 8, fillW, BRIGHT_H - 16, 8, COL_TRY);
+  }
+  char pct[8];
+  snprintf(pct, sizeof(pct), "%d%%", brightnessPct);
+  lcd.setTextDatum(textdatum_t::middle_center);
+  lcd.setFont(&fonts::Font2);
+  lcd.setTextColor(COL_FG, COL_BG);
+  lcd.drawString(pct, PCT_X + PCT_W / 2, BRIGHT_Y + BRIGHT_H / 2);
+
+  lcd.setTextDatum(textdatum_t::top_left);
+  lcd.setFont(&fonts::Font2);
+  lcd.setTextColor(COL_FG, COL_BG);
+  lcd.drawString("Grade level", 24, GRADE_NOTE_Y);
+  lcd.setTextDatum(textdatum_t::top_right);
+  if (gradeOptions[gradeLevel].live) {
+    lcd.drawString("Students see this screen now.", 776, GRADE_NOTE_Y);
+  } else {
+    lcd.drawString("Saved. Student screen stays Grades 2-4.", 776, GRADE_NOTE_Y);
+  }
+
+  for (int i = 0; i < GRADE_COUNT; i++) {
+    int top = gradeRowTop(i);
+    bool selected = (i == gradeLevel);
+    uint16_t fill = COL_ROW;
+    if (selected && gradeOptions[i].live) {
+      fill = COL_TRY;
+    } else if (selected) {
+      fill = COL_ASK;
+    }
+    lcd.fillRoundRect(ROW_X, top, ROW_W, GRADE_H, 12, fill);
+    lcd.setTextDatum(textdatum_t::top_left);
+    lcd.setFont(&fonts::Font2);
+    lcd.setTextColor(COL_FG, fill);
+    lcd.drawString(gradeOptions[i].label, ROW_X + 16, top + 6);
+    lcd.drawString(gradeOptions[i].about, ROW_X + 16, top + 30);
+    lcd.setTextDatum(textdatum_t::middle_right);
+    const char *tag = gradeOptions[i].live ? "In use" : "Placeholder";
+    lcd.drawString(tag, ROW_X + ROW_W - 16, top + GRADE_H / 2);
+  }
+  lcd.setTextDatum(textdatum_t::top_left);
+}
+
+static int pushKey(KeyHit *out, int n, int action, char ch, int x, int y, int w, int h) {
+  if (n >= KEY_MAX) {
+    return n;
+  }
+  out[n].action = action;
+  out[n].ch = ch;
+  out[n].x = x;
+  out[n].y = y;
+  out[n].w = w;
+  out[n].h = h;
+  return n + 1;
+}
+
+static int collectKeys(KeyHit *out) {
+  int n = 0;
+  const char *rows[] = {"QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"};
+  const int counts[] = {10, 9, 7};
+  for (int r = 0; r < 3; r++) {
+    int slots = (r == 2) ? 8 : counts[r];
+    int keyW = (KEY_AREA_W - (slots - 1) * KEY_GAP) / slots;
+    int rowW = slots * keyW + (slots - 1) * KEY_GAP;
+    int x = KEY_LEFT + (KEY_AREA_W - rowW) / 2;
+    int y = KEY_TOP + r * (KEY_H + KEY_GAP);
+    for (int c = 0; c < counts[r]; c++) {
+      n = pushKey(out, n, KEY_CHAR, rows[r][c], x, y, keyW, KEY_H);
+      x += keyW + KEY_GAP;
+    }
+    if (r == 2) {
+      n = pushKey(out, n, KEY_BACKSPACE, 0, x, y, keyW, KEY_H);
+    }
+  }
+
+  int y = KEY_TOP + 3 * (KEY_H + KEY_GAP);
+  int markW = 80;
+  int clearW = 160;
+  int spaceW = KEY_AREA_W - markW - markW - clearW - 3 * KEY_GAP;
+  int x = KEY_LEFT;
+  n = pushKey(out, n, KEY_CHAR, '\'', x, y, markW, KEY_H);
+  x += markW + KEY_GAP;
+  n = pushKey(out, n, KEY_CHAR, '-', x, y, markW, KEY_H);
+  x += markW + KEY_GAP;
+  n = pushKey(out, n, KEY_SPACE, ' ', x, y, spaceW, KEY_H);
+  x += spaceW + KEY_GAP;
+  n = pushKey(out, n, KEY_CLEAR, 0, x, y, clearW, KEY_H);
+  return n;
+}
+
+static void keyLabel(const KeyHit *key, char *buf, int len) {
+  if (key->action == KEY_BACKSPACE) {
+    snprintf(buf, len, "Del");
+  } else if (key->action == KEY_CLEAR) {
+    snprintf(buf, len, "Clear");
+  } else if (key->action == KEY_SPACE) {
+    snprintf(buf, len, "Space");
+  } else {
+    buf[0] = key->ch;
+    buf[1] = 0;
+  }
+}
+
+static void paintNameEditor() {
+  lcd.fillScreen(COL_BG);
+  lcd.setTextDatum(textdatum_t::middle_left);
+  lcd.setFont(&fonts::Font4);
+  lcd.setTextColor(COL_FG, COL_BG);
+  lcd.drawString("Student name", 24, 30);
+  paintTopButton(NAME_BACK_X, NAME_BACK_Y, NAME_BACK_W, NAME_BACK_H, "Back", COL_ROW);
+  uint16_t saveFill = nameEdit[0] ? COL_TRY : COL_ROW;
+  paintTopButton(DONE_X, DONE_Y, DONE_W, DONE_H, "Save", saveFill);
+
+  lcd.fillRoundRect(FIELD_X, FIELD_Y, FIELD_W, FIELD_H, 12, COL_ROW);
+  lcd.setTextDatum(textdatum_t::middle_left);
+  lcd.setFont(&fonts::Font4);
+  lcd.setTextColor(COL_FG, COL_ROW);
+  int midY = FIELD_Y + FIELD_H / 2;
+  if (nameEdit[0] == 0) {
+    lcd.setFont(&fonts::Font2);
+    lcd.drawString("Tap letters below", FIELD_X + 20, midY);
+  } else {
+    lcd.drawString(nameEdit, FIELD_X + 20, midY);
+    int textW = lcd.textWidth(nameEdit);
+    lcd.fillRect(FIELD_X + 26 + textW, FIELD_Y + 18, 3, 28, COL_FG);
+  }
+
+  KeyHit keys[KEY_MAX];
+  int count = collectKeys(keys);
+  for (int i = 0; i < count; i++) {
+    uint16_t fill = COL_ROW;
+    if (keys[i].action == KEY_BACKSPACE || keys[i].action == KEY_CLEAR) {
+      fill = COL_FOOT;
+    }
+    char label[8];
+    keyLabel(&keys[i], label, sizeof(label));
+    paintTopButton(keys[i].x, keys[i].y, keys[i].w, keys[i].h, label, fill);
+  }
+  lcd.setTextDatum(textdatum_t::top_left);
+}
+
+static bool nameNeedsCapital() {
+  int n = strlen(nameEdit);
+  if (n == 0) {
+    return true;
+  }
+  char prev = nameEdit[n - 1];
+  return prev == ' ' || prev == '-' || prev == '\'';
+}
+
+static void applyKey(const KeyHit *key) {
+  int n = strlen(nameEdit);
+  if (key->action == KEY_BACKSPACE) {
+    if (n > 0) {
+      nameEdit[n - 1] = 0;
+    }
+  } else if (key->action == KEY_CLEAR) {
+    nameEdit[0] = 0;
+  } else if (key->action == KEY_CHAR || key->action == KEY_SPACE) {
+    char c = (key->action == KEY_SPACE) ? ' ' : key->ch;
+    if (n >= NAME_MAX) {
+      return;
+    }
+    if ((c == ' ' || c == '-' || c == '\'') && (n == 0 || nameEdit[n - 1] == c)) {
+      return;
+    }
+    if (c >= 'A' && c <= 'Z' && !nameNeedsCapital()) {
+      c = c - 'A' + 'a';
+    }
+    nameEdit[n] = c;
+    nameEdit[n + 1] = 0;
+  } else {
+    return;
+  }
+  paintNameEditor();
+}
+
+static void trimName(char *text) {
+  int n = strlen(text);
+  while (n > 0 && text[n - 1] == ' ') {
+    text[--n] = 0;
+  }
+  int start = 0;
+  while (text[start] == ' ') {
+    start++;
+  }
+  if (start > 0) {
+    int i = 0;
+    while (text[start + i]) {
+      text[i] = text[start + i];
+      i++;
+    }
+    text[i] = 0;
+  }
 }
 
 static void showMainMenu() {
@@ -472,14 +895,101 @@ static void goBack() {
   }
 }
 
+static void showReturnScreen() {
+  int dest = returnScreen;
+  if (nameDirty || dest == SCREEN_HELLO || dest == SCREEN_SETTINGS || dest == SCREEN_NAME) {
+    nameDirty = false;
+    screenMs = millis();
+    currentScreen = SCREEN_HELLO;
+    paintHello();
+    return;
+  }
+  currentScreen = dest;
+  if (dest == SCREEN_SUBMENU) {
+    paintSubmenu();
+  } else if (dest == SCREEN_SELECTED) {
+    paintSelected();
+  } else {
+    showMainMenu();
+  }
+}
+
+static void openSettings() {
+  returnScreen = currentScreen;
+  currentScreen = SCREEN_SETTINGS;
+  paintSettings();
+}
+
+static void openNameEditor() {
+  copyName(nameEdit, studentName);
+  currentScreen = SCREEN_NAME;
+  paintNameEditor();
+}
+
+static void closeNameEditor() {
+  currentScreen = SCREEN_SETTINGS;
+  paintSettings();
+}
+
+static void saveNameEdit() {
+  trimName(nameEdit);
+  if (nameEdit[0] == 0) {
+    paintNameEditor();
+    return;
+  }
+  copyName(studentName, nameEdit);
+  nameDirty = true;
+  saveSettings();
+  closeNameEditor();
+}
+
+static void setBrightnessPct(int pct) {
+  if (pct < BRIGHT_MIN) {
+    pct = BRIGHT_MIN;
+  }
+  if (pct > BRIGHT_MAX) {
+    pct = BRIGHT_MAX;
+  }
+  pct = (pct / 10) * 10;
+  if (pct == brightnessPct) {
+    return;
+  }
+  brightnessPct = pct;
+  applyBrightness();
+  saveSettings();
+  paintSettings();
+}
+
+static int brightnessFromX(int x) {
+  int rel = x - BAR_X;
+  if (rel < 0) {
+    rel = 0;
+  }
+  if (rel > BAR_W) {
+    rel = BAR_W;
+  }
+  int pct = BRIGHT_MIN + rel * (BRIGHT_MAX - BRIGHT_MIN) / BAR_W;
+  return ((pct + 5) / 10) * 10;
+}
+
+static void setGrade(int index) {
+  if (index < 0 || index >= GRADE_COUNT || index == gradeLevel) {
+    return;
+  }
+  gradeLevel = index;
+  saveSettings();
+  paintSettings();
+}
+
 void setup() {
   pinMode(PIN_BL, OUTPUT);
   digitalWrite(PIN_BL, HIGH);
 
   initExpander();
+  loadSettings();
   lcd.init();
   lcd.setRotation(0);
-  setBacklight(true);
+  applyBrightness();
 
   RemoteXY_Init();
   screenMs = millis();
@@ -494,6 +1004,8 @@ void loop() {
   }
 
   if (currentScreen != SCREEN_HELLO &&
+      currentScreen != SCREEN_SETTINGS &&
+      currentScreen != SCREEN_NAME &&
       (RemoteXY.connect_flag != shownConnect ||
        RemoteXY.selectorSwitch_01 != shownSwitch ||
        RemoteXY.optionSelector_01 != shownOption)) {
@@ -505,7 +1017,13 @@ void loop() {
   bool touchDown = lcd.getTouch(&tx, &ty);
   if (touchDown && !touchWasDown && (millis() - tapMs) >= TAP_GAP_MS) {
     tapMs = millis();
-    if (currentScreen == SCREEN_HELLO) {
+    bool onGearScreen = currentScreen == SCREEN_HELLO ||
+                        currentScreen == SCREEN_MENU ||
+                        currentScreen == SCREEN_SUBMENU ||
+                        currentScreen == SCREEN_SELECTED;
+    if (onGearScreen && inBox(tx, ty, GEAR_X, GEAR_Y, GEAR_W, GEAR_H)) {
+      openSettings();
+    } else if (currentScreen == SCREEN_HELLO) {
       showMainMenu();
     } else if (currentScreen == SCREEN_MENU) {
       int height = rowHeightFor(totalLines);
@@ -528,8 +1046,44 @@ void loop() {
           }
         }
       }
-    } else if (inBox(tx, ty, BACK_X, BACK_Y, BACK_W, BACK_H)) {
-      goBack();
+    } else if (currentScreen == SCREEN_SELECTED) {
+      if (inBox(tx, ty, BACK_X, BACK_Y, BACK_W, BACK_H)) {
+        goBack();
+      }
+    } else if (currentScreen == SCREEN_SETTINGS) {
+      if (inBox(tx, ty, DONE_X, DONE_Y, DONE_W, DONE_H)) {
+        showReturnScreen();
+      } else if (inBox(tx, ty, ROW_X, NAME_Y, ROW_W, NAME_H)) {
+        openNameEditor();
+      } else if (inBox(tx, ty, MINUS_X, BRIGHT_Y, STEP_W, BRIGHT_H)) {
+        setBrightnessPct(brightnessPct - 10);
+      } else if (inBox(tx, ty, PLUS_X, BRIGHT_Y, STEP_W, BRIGHT_H)) {
+        setBrightnessPct(brightnessPct + 10);
+      } else if (inBox(tx, ty, BAR_X, BRIGHT_Y, BAR_W, BRIGHT_H)) {
+        setBrightnessPct(brightnessFromX(tx));
+      } else {
+        for (int i = 0; i < GRADE_COUNT; i++) {
+          if (inBox(tx, ty, ROW_X, gradeRowTop(i), ROW_W, GRADE_H)) {
+            setGrade(i);
+            break;
+          }
+        }
+      }
+    } else if (currentScreen == SCREEN_NAME) {
+      if (inBox(tx, ty, DONE_X, DONE_Y, DONE_W, DONE_H)) {
+        saveNameEdit();
+      } else if (inBox(tx, ty, NAME_BACK_X, NAME_BACK_Y, NAME_BACK_W, NAME_BACK_H)) {
+        closeNameEditor();
+      } else {
+        KeyHit keys[KEY_MAX];
+        int count = collectKeys(keys);
+        for (int i = 0; i < count; i++) {
+          if (inBox(tx, ty, keys[i].x, keys[i].y, keys[i].w, keys[i].h)) {
+            applyKey(&keys[i]);
+            break;
+          }
+        }
+      }
     }
   }
   touchWasDown = touchDown;
