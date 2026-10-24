@@ -2,6 +2,18 @@
   GEEN1400 — Scott Nickerson
   Arduino Uno, 16x2 HD44780 (parallel), HM-10 BLE, RemoteXY app.
 
+  This is the earlier demo. The CrowPanel sketch in GEEN1400_CLEAR_Bridge
+  is the one students use now. This file still shows the same idea on a
+  small two-line character screen: the board runs a short animation, a
+  button hides or shows the letters, and a phone can connect.
+
+  How an Arduino sketch runs:
+  setup() runs once when the board turns on or is reset.
+  loop() then repeats forever. Anything that must keep happening
+  (watch the button, talk to the phone, advance the animation)
+  belongs in loop(). This sketch avoids delay(), because delay()
+  would freeze the phone connection while it waits.
+
   Pin map from the Tinkercad sheet (USB on the left). Header order is
   AREF, GND, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, TX, RX.
 
@@ -16,6 +28,7 @@
     V0 = contrast pot wiper (pink). Pot ends are 5V and GND. No Uno pin.
     LED anode (brown) goes through a resistor to 5V. Cathode (black) is GND.
     The backlight is not on a GPIO, so "off" is the HD44780 display command.
+    That command hides the letters. The light behind them stays on.
 
   Button on D13, active HIGH. Magenta jumper is the signal. The other
   side of the switch is a red jumper to 5V. A 10k (brown-black-orange)
@@ -26,6 +39,7 @@
   either way, because it is wired to 5V.
   If a press acts on release instead of press, the 10k is on the 5V side —
   change the HIGH test in loop() to LOW.
+  The program itself reads pin 7 (PIN_BUTTON below), not pin 13.
 
   HM-10 is not drawn. The generated sketch had SoftwareSerial on D2/D3,
   which are LCD D7 and D6 here, so the module has to move:
@@ -45,16 +59,20 @@
 //        RemoteXY include library          //
 //////////////////////////////////////////////
 
-// you can enable debug logging to Serial at 115200
+// Uncomment the next line to print connection details on the USB serial
+// monitor at 115200 baud. Leave it commented for normal classroom use.
 //#define REMOTEXY__DEBUGLOG
 
-// RemoteXY select connection mode and include library
+// SOFTSERIAL means the Bluetooth module uses two normal pins (D8 and D10)
+// instead of the Uno's USB port. The USB port stays free for programming.
 #define REMOTEXY_MODE__SOFTSERIAL
 
 #include <SoftwareSerial.h>
 
-// RemoteXY connection settings
-// D2/D3 from the editor collide with LCD D7/D6. HM-10 is on D8/D10.
+// Which Uno pins talk to the HM-10, and how fast.
+// The editor originally picked D2 and D3. Those pins are already the LCD,
+// so the wires were moved to D8 (Uno listens) and D10 (Uno talks).
+// 9600 is the speed the HM-10 uses unless someone changed it.
 #define REMOTEXY_SERIAL_RX 8
 #define REMOTEXY_SERIAL_TX 10
 #define REMOTEXY_SERIAL_SPEED 9600
@@ -62,7 +80,10 @@
 
 #include <RemoteXY.h>
 
-// RemoteXY GUI configuration
+// RemoteXY GUI configuration.
+// The long list of numbers is a picture of the phone screen, exported
+// from the RemoteXY editor. It is not meant to be edited by hand.
+// Change the phone layout in the editor, then paste the new export here.
 #pragma pack(push, 1)
 uint8_t const PROGMEM RemoteXY_CONF_PROGMEM[] =   // 129 bytes V19
   { 255,2,0,3,0,122,0,19,0,0,0,0,31,1,106,200,1,1,5,0,
@@ -73,19 +94,24 @@ uint8_t const PROGMEM RemoteXY_CONF_PROGMEM[] =   // 129 bytes V19
   116,117,100,101,110,116,32,49,0,83,116,117,100,101,110,116,32,50,0,83,
   116,117,100,101,110,116,32,51,0 };
 
-// this structure defines all the variables and events of your control interface
+// These names are the controls on the phone.
+// The library fills them in. loop() can read them at any time.
+// The packing lines keep the bytes in the exact order RemoteXY expects.
 struct {
 
-    // input variables
+    // input variables. The phone sends these to the Uno.
+    // 0 means nothing picked. 1, 2, and 3 are the three choices.
   uint8_t selectorSwitch_01; // from 0 to 3
   uint8_t optionSelector_01; // from 0 to 3
 
-    // output variables
+    // output variables. The Uno can send these back to the phone.
+    // This demo does not change them. They stay at 0.
   uint8_t strings_01; // from 0 to 1
   uint8_t strings_04; // from 0 to 1
   uint8_t strings_02; // from 0 to 1
 
-    // other variable
+    // other variable.
+    // 1 when the phone app is connected, 0 when it is not.
   uint8_t connect_flag;  // =1 if wire connected, else =0
 
 } RemoteXY;
@@ -97,20 +123,36 @@ struct {
 
 #include <LiquidCrystal.h>
 
+// Pin the program actually reads for the button. HIGH means pressed,
+// because a resistor holds the pin LOW until the switch connects 5V.
 static const uint8_t PIN_BUTTON = 7;
-static const unsigned long DEBOUNCE_MS = 45;
-static const unsigned long DIGIT_MS = 700;
-static const unsigned long MSG_MS = 1400;
-static const unsigned long SWEEP_MS = 140;
 
+// A real button can flicker for a few milliseconds as the metal contacts
+// bounce. Wait this long on the same reading before trusting it.
+static const unsigned long DEBOUNCE_MS = 45;
+
+// How long each step of the on-screen animation stays up.
+static const unsigned long DIGIT_MS = 700;  // one count, such as "3 / 9"
+static const unsigned long MSG_MS = 1400;   // one of the three messages
+static const unsigned long SWEEP_MS = 140;  // one step of the moving block
+
+// The animation is a small state machine. phase says which part is running.
+// WAIT  : letters are hidden. The board is idle until the button is pressed.
+// COUNT : show 0, then 1, then 2, up through 9.
+// MSG   : show three short text screens, one after another.
+// SWEEP : move one solid block across the bottom row, then go back to MSG.
 static const uint8_t PHASE_WAIT = 0;
 static const uint8_t PHASE_COUNT = 1;
 static const uint8_t PHASE_MSG = 2;
 static const uint8_t PHASE_SWEEP = 3;
 
-// RS, E, D4, D5, D6, D7
+// The LCD is wired in 4-bit mode. The numbers are Arduino pins:
+// RS, E, D4, D5, D6, D7. See the pin list at the top of the file.
 LiquidCrystal lcd(12, 11, 5, 4, 3, 2);
 
+// A custom character is 8 rows of 5 pixels. A 1 bit is a dark pixel.
+// This pattern is a simple smile. createChar() stores it in slot 0,
+// and lcd.write(0) draws it later.
 static uint8_t smile[8] = {
   0b00000,
   0b01010,
@@ -122,20 +164,29 @@ static uint8_t smile[8] = {
   0b00000
 };
 
+// Remember where the animation is between trips through loop().
+// These would reset every time if they were created inside loop().
 static uint8_t phase = PHASE_WAIT;
-static uint8_t digit = 0;
-static uint8_t msg = 0;
-static uint8_t sweep = 0;
-static unsigned long phaseMs = 0;
+static uint8_t digit = 0;   // the number currently shown, 0 through 9
+static uint8_t msg = 0;     // which of the three messages is showing
+static uint8_t sweep = 0;   // column of the moving block, 0 through 15
+static unsigned long phaseMs = 0;  // millis() when this step started
 
+// Button memory. rawLevel is the latest pin reading, which may still be
+// bouncing. stableLevel is the reading we have decided to trust.
 static bool rawLevel = LOW;
 static bool stableLevel = LOW;
-static unsigned long changeMs = 0;
-static bool screenOn = false;
+static unsigned long changeMs = 0;  // millis() when the raw reading last changed
+static bool screenOn = false;       // true while the letters are visible
 
+// Draw the counting screen.
+// Top row: "Count: 3 / 9". Bottom row: a bar of filled blocks, one per
+// number reached, with dashes for the numbers still ahead.
+// Character 255 is a solid block that the LCD already knows.
 void paintCount() {
   lcd.clear();
   lcd.setCursor(0, 0);
+  // F() keeps the text in flash instead of the Uno's small RAM.
   lcd.print(F("Count: "));
   lcd.print(digit);
   lcd.print(F(" / 9"));
@@ -145,6 +196,8 @@ void paintCount() {
   }
 }
 
+// Draw one of the three message screens. msg picks which one.
+// The smile on the second message is the custom character in slot 0.
 void paintMsg() {
   lcd.clear();
   if (msg == 0) {
@@ -166,6 +219,8 @@ void paintMsg() {
   }
 }
 
+// Draw the moving block. The top line is written only on the first step,
+// so it does not flicker. Each later call only redraws the bottom row.
 void paintSweep() {
   if (sweep == 0) {
     lcd.clear();
@@ -178,6 +233,8 @@ void paintSweep() {
   }
 }
 
+// Button turned the letters on. Start the count over at 0.
+// lcd.display() undoes lcd.noDisplay(). It does not turn on the backlight.
 void startScreen() {
   screenOn = true;
   phase = PHASE_COUNT;
@@ -187,30 +244,45 @@ void startScreen() {
   paintCount();
 }
 
+// Button turned the letters off. Stay in loop() so the phone is still
+// serviced, but skip the animation until the button is pressed again.
 void stopScreen() {
   screenOn = false;
   phase = PHASE_WAIT;
   lcd.noDisplay();
 }
 
+// Runs once. Prepare the button, the LCD, and the phone link, then
+// show the first counting screen.
 void setup() {
+  // INPUT, not INPUT_PULLUP. The pulldown resistor is on the breadboard.
   pinMode(PIN_BUTTON, INPUT);
 
+  // 16 columns, 2 rows. Then store the smile in custom-character slot 0.
   lcd.begin(16, 2);
   lcd.createChar(0, smile);
   lcd.clear();
 
+  // Take one reading now so the first loop does not look like a new press.
   rawLevel = digitalRead(PIN_BUTTON);
   stableLevel = rawLevel;
   changeMs = millis();
 
+  // Start listening for the RemoteXY phone app over the HM-10.
   RemoteXY_Init();
   startScreen();
 }
 
+// Runs over and over. Each pass does three jobs, in this order:
+// 1. Give the phone library a turn, or the app will time out.
+// 2. Debounce the button and toggle the letters on a real press.
+// 3. If the letters are visible, advance the animation when its timer is up.
 void loop() {
   RemoteXYEngine.handler();
 
+  // Debounce. If the pin changed, start the wait over. Only accept the
+  // new level after it has held still for DEBOUNCE_MS. Act on the change
+  // to HIGH, which is the press, not the release.
   bool reading = digitalRead(PIN_BUTTON);
   if (reading != rawLevel) {
     rawLevel = reading;
@@ -227,10 +299,13 @@ void loop() {
     }
   }
 
+  // Hidden screen: nothing left to draw this pass.
   if (!screenOn) {
     return;
   }
 
+  // millis() counts milliseconds since startup. phaseMs is when the
+  // current step began. The difference is how long that step has lasted.
   unsigned long now = millis();
   if (phase == PHASE_COUNT) {
     if (now - phaseMs >= DIGIT_MS) {
@@ -239,6 +314,7 @@ void loop() {
         digit++;
         paintCount();
       } else {
+        // The count finished. Start the first message.
         phase = PHASE_MSG;
         msg = 0;
         paintMsg();
@@ -251,17 +327,20 @@ void loop() {
         msg++;
         paintMsg();
       } else {
+        // All three messages have been shown. Start the moving block.
         phase = PHASE_SWEEP;
         sweep = 0;
         paintSweep();
       }
     }
   } else if (now - phaseMs >= SWEEP_MS) {
+    // This branch is PHASE_SWEEP. The other two phases returned above.
     phaseMs = now;
     if (sweep < 15) {
       sweep++;
       paintSweep();
     } else {
+      // The block reached the right edge. Play the messages again.
       phase = PHASE_MSG;
       msg = 0;
       paintMsg();
