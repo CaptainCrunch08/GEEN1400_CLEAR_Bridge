@@ -21,23 +21,38 @@
   The gear in the top right opens settings. A teacher can change the
   name on the startup screen, the brightness, and the grade-level look.
   Grades 2-4 is the screen students see. The other grades are placeholders.
+
+  How this sketch runs:
+  setup() runs once at power-on. loop() then repeats forever.
+  There is no web page on the panel. Each paint function draws one
+  whole screen. A finger tap is noticed in loop(), and that changes
+  which screen variable is current. The next paint draws that screen.
+  The name, brightness, and grade are written to flash, so they are
+  still there after the panel restarts.
 */
 
+// Tell RemoteXY to be its own Wi-Fi network, not to join the school Wi-Fi.
+// The phone joins that network and opens the RemoteXY app.
 #define REMOTEXY_MODE__WIFI_POINT
 
 #include <WiFi.h>
 
+// Name and password of the hotspot the panel creates. 6377 is the port
+// the RemoteXY phone app expects. These must match the app.
 #define REMOTEXY_WIFI_SSID "RemoteXY"
 #define REMOTEXY_WIFI_PASSWORD "12345678"
 #define REMOTEXY_SERVER_PORT 6377
 
 #include <RemoteXY.h>
-#include <Wire.h>
-#include <Preferences.h>
-#include <LovyanGFX.hpp>
+#include <Wire.h>          // I2C bus, used by the touch chip and the small expander
+#include <Preferences.h>   // saves a few settings in flash across restarts
+#include <LovyanGFX.hpp>   // draws text, rectangles, and reads the touch panel
 #include <lgfx/v1/platforms/esp32s3/Panel_RGB.hpp>
 #include <lgfx/v1/platforms/esp32s3/Bus_RGB.hpp>
 
+// The bytes below were exported from the RemoteXY editor. They describe
+// the phone screen. Edit that screen in the editor, then paste a new
+// export here. Do not change individual numbers by hand.
 #pragma pack(push, 1)
 uint8_t const PROGMEM RemoteXY_CONF_PROGMEM[] = {  // 129 bytes V19
   255,2,0,3,0,122,0,19,0,0,0,0,31,1,106,200,1,1,5,0,
@@ -49,16 +64,23 @@ uint8_t const PROGMEM RemoteXY_CONF_PROGMEM[] = {  // 129 bytes V19
   115,112,111,110,115,101,32,51,0
 };
 
+// Live values from the phone. The library fills these in.
+// loop() only reads them. The packing lines keep the byte order RemoteXY needs.
 struct {
-  uint8_t selectorSwitch_01; // student, from 0 to 3
-  uint8_t optionSelector_01; // response, from 0 to 3
-  uint8_t strings_01; // from 0 to 1
+  uint8_t selectorSwitch_01; // which student the phone picked: 0 none, 1, 2, or 3
+  uint8_t optionSelector_01; // which response the phone picked: 0 none, 1, 2, or 3
+  uint8_t strings_01; // from 0 to 1, sent back to the phone; this sketch leaves it alone
   uint8_t strings_02; // from 0 to 1
   uint8_t strings_03; // from 0 to 1
-  uint8_t connect_flag;  // =1 if wire connected, else =0
+  uint8_t connect_flag;  // 1 when the phone app is connected, otherwise 0
 } RemoteXY;
 #pragma pack(pop)
 
+// LGFX is the display driver. The constructor only stores the wiring.
+// Nothing is drawn until lcd.init() in setup().
+// The numbers are the ESP32 pins soldered to this CrowPanel. They match
+// Elecrow's 5 inch board and should not be changed for a different project
+// unless the board itself is different.
 class LGFX : public lgfx::LGFX_Device {
   lgfx::Bus_RGB _bus_instance;
   lgfx::Panel_RGB _panel_instance;
@@ -67,6 +89,8 @@ class LGFX : public lgfx::LGFX_Device {
 
 public:
   LGFX(void) {
+    // Sixteen color wires plus the sync signals that tell the panel
+    // when each new row and frame starts. freq_write is the pixel clock.
     {
       auto cfg = _bus_instance.config();
       cfg.panel = &_panel_instance;
@@ -104,6 +128,8 @@ public:
       cfg.pclk_idle_high = 0;
       _bus_instance.config(cfg);
     }
+    // The glass is 800 pixels wide and 480 tall. Offset stays 0 because
+    // the image starts at the corner of the panel, not inset.
     {
       auto cfg = _panel_instance.config();
       cfg.memory_width = 800;
@@ -114,6 +140,9 @@ public:
       cfg.offset_y = 0;
       _panel_instance.config(cfg);
     }
+    // GT911 touch chip, on the same I2C pins as the expander (19 and 20).
+    // x and y here are pixel coordinates. A tap at the left edge is x = 0.
+    // Address 0x5D is the address this panel answers on.
     {
       auto cfg = _touch_instance.config();
       cfg.x_min = 0;
@@ -132,6 +161,10 @@ public:
       _touch_instance.config(cfg);
       _panel_instance.setTouch(&_touch_instance);
     }
+    // Backlight on pin 2. PWM turns the light partly on instead of only
+    // fully on or off, which is how the brightness slider works.
+    // 20000 Hz is fast enough that the light does not visibly flicker.
+    // invert false means a higher number is brighter.
     {
       auto cfg = _light_instance.config();
       cfg.pin_bl = 2;
@@ -146,23 +179,38 @@ public:
   }
 };
 
+// Pin 2 is also driven as a simple on/off output for a moment in setup(),
+// before the PWM backlight takes over the same pin.
 static const uint8_t PIN_BL = 2;
+// Small I2C chip on the panel. One of its pins helps enable the backlight.
 static const uint8_t PCA9557_ADDR = 0x19;
+// The greeting stays up this long, then the feelings list appears on its own.
 static const unsigned long HELLO_MS = 2000;
+// Ignore a second tap that arrives sooner than this. A finger often
+// sends more than one touch for a single press.
 static const unsigned long TAP_GAP_MS = 200;
 
-static const int SCREEN_HELLO = 0;
-static const int SCREEN_MENU = 1;
-static const int SCREEN_SUBMENU = 2;
-static const int SCREEN_SELECTED = 3;
-static const int SCREEN_SETTINGS = 4;
-static const int SCREEN_NAME = 5;
+// currentScreen is always one of these. Drawing and tap handling both
+// look at it, so the program knows which page the student is on.
+static const int SCREEN_HELLO = 0;      // "Hi, name"
+static const int SCREEN_MENU = 1;       // the five feelings
+static const int SCREEN_SUBMENU = 2;    // responses for the feeling they picked
+static const int SCREEN_SELECTED = 3;   // the steps for one response
+static const int SCREEN_SETTINGS = 4;   // name, brightness, grade
+static const int SCREEN_NAME = 5;       // keyboard for the student name
 
+// Positions are pixels. x grows to the right, y grows downward.
+// (0, 0) is the top-left corner. The screen is 800 by 480.
+// Feeling and response buttons share one column. The list starts
+// below the title and stops above the status strip at the bottom.
 static const int ROW_X = 24;
 static const int ROW_W = 752;
 static const int ROW_GAP = 6;
 static const int LIST_TOP = 64;
 static const int LIST_BOTTOM = 412;
+// Gear sits in the top-right corner. Back sits just to its left on
+// the screens that need a way to return. Done and Save reuse the
+// top-right corner on the settings screens, where the gear is hidden.
 static const int GEAR_W = 56;
 static const int GEAR_H = 44;
 static const int GEAR_X = 800 - 12 - GEAR_W;
@@ -180,6 +228,9 @@ static const int NAME_BACK_H = 44;
 static const int NAME_BACK_X = DONE_X - 8 - NAME_BACK_W;
 static const int NAME_BACK_Y = 8;
 
+// Layout of the settings page and the name keyboard, in pixels.
+// NAME_MAX is the longest name that fits in the saved setting and
+// on the greeting line.
 static const int NAME_MAX = 16;
 static const int NAME_Y = 60;
 static const int NAME_H = 56;
@@ -198,6 +249,7 @@ static const int PCT_W = 72;
 static const int PCT_X = PLUS_X - 8 - PCT_W;
 static const int BAR_X = MINUS_X + STEP_W + 8;
 static const int BAR_W = PCT_X - 8 - BAR_X;
+// Brightness never goes below 20, so a tap cannot turn the panel black.
 static const int BRIGHT_MIN = 20;
 static const int BRIGHT_MAX = 100;
 
@@ -206,6 +258,7 @@ static const int GRADE_TOP = 230;
 static const int GRADE_H = 56;
 static const int GRADE_GAP = 6;
 static const int GRADE_COUNT = 4;
+// Index into gradeOptions of the layout students actually see today.
 static const int GRADE_LIVE = 2;
 
 static const int FIELD_X = 24;
@@ -219,11 +272,34 @@ static const int KEY_H = 62;
 static const int KEY_GAP = 8;
 static const int KEY_MAX = 32;
 
+// What a keyboard key does when it is tapped. Letter keys use KEY_CHAR.
 static const int KEY_CHAR = 1;
 static const int KEY_BACKSPACE = 2;
 static const int KEY_CLEAR = 3;
 static const int KEY_SPACE = 4;
 
+// =============================================================================
+// =============================================================================
+//
+//   EDIT THE STUDENT UI TEXT AND COLORS HERE
+//
+//   This block is the words and colors on the panel:
+//   screen colors, grade-level rows, the five feelings, and every response.
+//   Change the text in quotes to change what a student reads.
+//   true  = orange "Ask teacher" button
+//   false = green "Try this" button
+//   If you add or remove a response, also change the matching count below
+//   (anxietyCount, boredomCount, and the others).
+//
+//   How those words are drawn is the next big block, at paintHello().
+//
+// =============================================================================
+// =============================================================================
+
+// Colors are 16-bit values, the format this display uses (5 bits red,
+// 6 bits green, 5 bits blue), not ordinary web hex. The names are what
+// they look like on the panel: page background, text, button gray,
+// green for "try this", orange for "ask the teacher", and the footer.
 static const uint16_t COL_BG = 0xF7BD;
 static const uint16_t COL_FG = 0x2610;
 static const uint16_t COL_ROW = 0x6F5F;
@@ -231,6 +307,8 @@ static const uint16_t COL_TRY = 0x6F9B;
 static const uint16_t COL_ASK = 0xFE70;
 static const uint16_t COL_FOOT = 0xE73C;
 
+// One row in the grade list. live is true only for the layout that
+// is really on the student screens. The others are saved choices for later.
 struct GradeOption {
   const char *label;
   const char *about;
@@ -245,12 +323,19 @@ static const GradeOption gradeOptions[] = {
   {"Grade 5", "More reading, smaller type", false}
 };
 
+// One response under a feeling.
+// label is the button text. help is the longer instruction on the next screen.
+// asksTeacher true means the button is orange and needs a teacher.
+// false means the student can try it alone, and the button is green.
+// A \n inside help starts a new line on the detail screen.
 struct Choice {
   const char *label;
   const char *help;
   bool asksTeacher;
 };
 
+// The five feelings, in the same order as the lists below.
+// selectedMenu is an index into this array: 0 is Worried, 4 is Uncomfortable.
 static const char *menu[] = {
   "Worried",
   "Bored",
@@ -258,6 +343,8 @@ static const char *menu[] = {
   "Mad",
   "Uncomfortable"
 };
+// Responses for each feeling, in menu[] order.
+// Worried is index 0. The last true/false on each line is asksTeacher.
 static const Choice anxietyMenu[] = {
   {"Write my own words", "Your teacher can say yes or no. This will go to the teacher phone later.", true},
   {"I need a walk", "Ask your teacher if you can take a short walk.", true},
@@ -266,11 +353,13 @@ static const Choice anxietyMenu[] = {
   {"Breathing", "Breathe in while you count to 4.\nHold for 2.\nBreathe out while you count to 4.\nDo this 5 times.", false},
   {"Talk after class", "Ask to meet your teacher after class.", true}
 };
+// Boredom. menu index 1.
 static const Choice boredomMenu[] = {
   {"Write my own words", "Your teacher can say yes or no. This will go to the teacher phone later.", true},
   {"Draw how I feel", "Draw a picture of how you feel. You can show it when you are ready.", false},
   {"Quiet looking game", "Find 5 blue things.\nThen find 4 round things.\nThen find 3 soft things.", false}
 };
+// "I don't get it". menu index 2.
 static const Choice understandingMenu[] = {
   {"Write my own words", "Your teacher can say yes or no. This will go to the teacher phone later.", true},
   {"Draw the problem", "Draw the problem.\nCircle the part you do not understand.", false},
@@ -278,6 +367,7 @@ static const Choice understandingMenu[] = {
   {"Explain this question", "Ask your teacher to explain this question.", true},
   {"Can we practice one?", "Ask for one example or practice problem.", true}
 };
+// Mad. menu index 3.
 static const Choice angerMenu[] = {
   {"Write my own words", "Your teacher can say yes or no. This will go to the teacher phone later.", true},
   {"I need a walk", "Ask your teacher if you can take a short walk.", true},
@@ -285,6 +375,7 @@ static const Choice angerMenu[] = {
   {"Talk to someone", "Ask your teacher if you can talk with someone.", true},
   {"Help me cool down", "Stop.\nPut your hands in your lap.\nCount slowly to 10.\nTake one slow breath.", false}
 };
+// Uncomfortable. menu index 4.
 static const Choice uncomfortableMenu[] = {
   {"Write my own words", "Your teacher can say yes or no. This will go to the teacher phone later.", true},
   {"I need a walk", "Ask your teacher if you can take a short walk.", true},
@@ -292,6 +383,9 @@ static const Choice uncomfortableMenu[] = {
   {"Can I see an example?", "Ask your teacher to show you one example.", true}
 };
 
+// How many buttons each list has. These must match the arrays above.
+// They are separate numbers because a C array of structs does not
+// carry its length around with it.
 static const int totalLines = 5;
 static const int anxietyCount = 6;
 static const int boredomCount = 3;
@@ -299,6 +393,16 @@ static const int understandingCount = 5;
 static const int angerCount = 5;
 static const int uncomfortableCount = 4;
 
+// =============================================================================
+// =============================================================================
+//
+//   END OF STUDENT UI TEXT AND COLORS
+//
+// =============================================================================
+// =============================================================================
+
+// One on-screen key: what it does, the letter it types, and the
+// rectangle used both to draw it and to test a tap.
 struct KeyHit {
   int action;
   char ch;
@@ -308,25 +412,30 @@ struct KeyHit {
   int h;
 };
 
+// Values that have to survive from one loop() pass to the next.
+// If they were created inside loop(), they would reset every time.
 static LGFX lcd;
-static Preferences prefs;
-static bool expanderOk = false;
+static Preferences prefs;             // handle for the flash settings
+static bool expanderOk = false;       // true after the small I2C chip answers
 static int currentScreen = SCREEN_HELLO;
-static int returnScreen = SCREEN_MENU;
-static int selectedMenu = 0;
-static int submenuPos = 0;
-static unsigned long screenMs = 0;
-static unsigned long tapMs = 0;
-static bool touchWasDown = false;
-static bool nameDirty = false;
-static uint8_t shownConnect = 0xFF;
-static uint8_t shownSwitch = 0xFF;
-static uint8_t shownOption = 0xFF;
-static char studentName[NAME_MAX + 1] = "Connor";
-static char nameEdit[NAME_MAX + 1] = "Connor";
+static int returnScreen = SCREEN_MENU; // screen to reopen when settings closes
+static int selectedMenu = 0;          // which feeling was tapped
+static int submenuPos = 0;            // which response inside that feeling
+static unsigned long screenMs = 0;    // when the greeting was shown
+static unsigned long tapMs = 0;       // when the last accepted tap happened
+static bool touchWasDown = false;     // so one press counts once, not every loop
+static bool nameDirty = false;        // name changed, so Done should show the greeting
+static uint8_t shownConnect = 0xFF;   // last phone values drawn in the footer
+static uint8_t shownSwitch = 0xFF;    // 0xFF means "not drawn yet", so the first
+static uint8_t shownOption = 0xFF;    // real value always gets painted
+static char studentName[NAME_MAX + 1] = "Connor"; // name on the greeting
+static char nameEdit[NAME_MAX + 1] = "Connor";    // name being typed, not saved yet
 static int brightnessPct = 80;
 static int gradeLevel = GRADE_LIVE;
 
+// Send one byte to a register on the PCA9557 over I2C.
+// Returns true when the chip acknowledges. The register numbers
+// come from that chip's datasheet: 0x03 is direction, 0x01 is output.
 static bool pcaWrite(uint8_t reg, uint8_t value) {
   Wire.beginTransmission(PCA9557_ADDR);
   Wire.write(reg);
@@ -334,6 +443,12 @@ static bool pcaWrite(uint8_t reg, uint8_t value) {
   return Wire.endTransmission() == 0;
 }
 
+// Start I2C on pins 19 and 20, the same pins the touch chip uses.
+// If the expander does not answer, later backlight writes are skipped
+// and the PWM pin still controls the light by itself.
+// On this chip a 1 in register 3 means "input" and a 0 means "output".
+// The sequence drives every pin low, waits, raises pin 0 for the
+// backlight enable, then sets pin 1 back to an input.
 static void initExpander() {
   Wire.begin(19, 20);
   Wire.beginTransmission(PCA9557_ADDR);
@@ -348,6 +463,9 @@ static void initExpander() {
   pcaWrite(0x03, 0x02);
 }
 
+// Copy a name into a fixed buffer and always end it with a 0,
+// which is how C marks the end of a string. Stops at NAME_MAX
+// so a long saved value cannot write past the array.
 static void copyName(char *dest, const char *src) {
   int i = 0;
   while (src[i] && i < NAME_MAX) {
@@ -357,6 +475,9 @@ static void copyName(char *dest, const char *src) {
   dest[i] = 0;
 }
 
+// Turn a percent from 20 to 100 into the 0-255 level setBrightness expects.
+// 20% becomes 50, not 0, so the panel stays readable at the bottom of the slider.
+// 100% becomes 255, which is full brightness.
 static int dutyForBrightness(int pct) {
   if (pct < BRIGHT_MIN) {
     pct = BRIGHT_MIN;
@@ -367,6 +488,8 @@ static int dutyForBrightness(int pct) {
   return 50 + (205 * (pct - BRIGHT_MIN)) / (BRIGHT_MAX - BRIGHT_MIN);
 }
 
+// Push the saved percent out to the backlight, and make sure the
+// expander's enable pin is still on if that chip was found.
 static void applyBrightness() {
   lcd.setBrightness(dutyForBrightness(brightnessPct));
   if (expanderOk) {
@@ -374,6 +497,10 @@ static void applyBrightness() {
   }
 }
 
+// Read the saved name, brightness, and grade. The second argument
+// to each get is what we use when nothing has been saved yet.
+// The true on begin() means read-only. Names are checked character
+// by character so a damaged save cannot put odd symbols on the greeting.
 static void loadSettings() {
   prefs.begin("clear", true);
   String stored = prefs.getString("name", "Connor");
@@ -404,12 +531,17 @@ static void loadSettings() {
   if (brightnessPct > BRIGHT_MAX) {
     brightnessPct = BRIGHT_MAX;
   }
+  // Integer division drops the remainder, so 84 becomes 80. The slider
+  // only offers steps of 10, and this makes an old save match those steps.
   brightnessPct = (brightnessPct / 10) * 10;
   if (gradeLevel < 0 || gradeLevel >= GRADE_COUNT) {
     gradeLevel = GRADE_LIVE;
   }
 }
 
+// Write the three settings. false on begin() means writing is allowed.
+// "clear" is the folder name inside the chip's flash. It must stay
+// the same or loadSettings will not find the older values.
 static void saveSettings() {
   prefs.begin("clear", false);
   prefs.putString("name", studentName);
@@ -418,6 +550,7 @@ static void saveSettings() {
   prefs.end();
 }
 
+// Phone selectors use 1, 2, and 3. Anything else, including 0, prints a dash.
 static void paintChoice(uint8_t value, const char *one, const char *two, const char *three) {
   if (value == 1) {
     lcd.print(one);
@@ -430,6 +563,10 @@ static void paintChoice(uint8_t value, const char *one, const char *two, const c
   }
 }
 
+// Redraw only the strip along the bottom. "Ready" means no phone is
+// connected. A connected phone shows the student and response it picked.
+// The shown* variables remember what we drew, so loop() can skip this
+// when the phone has not changed anything.
 static void paintStatus() {
   lcd.fillRect(0, 420, 800, 60, COL_FOOT);
   lcd.setTextDatum(textdatum_t::top_left);
@@ -448,6 +585,7 @@ static void paintStatus() {
   shownOption = RemoteXY.optionSelector_01;
 }
 
+// How many response buttons belong to the feeling that was tapped.
 static int submenuCount() {
   switch (selectedMenu) {
     case 0: return anxietyCount;
@@ -459,6 +597,9 @@ static int submenuCount() {
   return 0;
 }
 
+// The response at this row for the feeling currently open.
+// A bad feeling index falls back to the first worried response
+// so the screen still has something safe to draw.
 static const Choice *choiceAt(int position) {
   switch (selectedMenu) {
     case 0: return &anxietyMenu[position];
@@ -470,6 +611,9 @@ static const Choice *choiceAt(int position) {
   return &anxietyMenu[0];
 }
 
+// Share the list area evenly across however many buttons there are.
+// Cap the height so a short list, like Boredom's three items, does
+// not turn into three huge bars.
 static int rowHeightFor(int count) {
   int gaps = (count > 1) ? (count - 1) * ROW_GAP : 0;
   int height = (LIST_BOTTOM - LIST_TOP - gaps) / count;
@@ -479,14 +623,21 @@ static int rowHeightFor(int count) {
   return height;
 }
 
+// Pixel y of button number index. count matters because the buttons
+// get shorter when there are more of them.
 static int rowTopFor(int index, int count) {
   return LIST_TOP + index * (rowHeightFor(count) + ROW_GAP);
 }
 
+// True when the touch point is inside a rectangle. The right and
+// bottom edges are not included, so two buttons that meet cannot
+// both claim the same pixel.
 static bool inBox(int32_t x, int32_t y, int boxX, int boxY, int boxW, int boxH) {
   return x >= boxX && x < boxX + boxW && y >= boxY && y < boxY + boxH;
 }
 
+// A rounded rectangle with its label centered. Used for Back, Done,
+// Save, Change, and every keyboard key.
 static void paintTopButton(int x, int y, int w, int h, const char *label, uint16_t fill) {
   lcd.fillRoundRect(x, y, w, h, 8, fill);
   lcd.setFont(&fonts::Font2);
@@ -499,6 +650,9 @@ static void paintBackButton() {
   paintTopButton(BACK_X, BACK_Y, BACK_W, BACK_H, "Back", COL_ROW);
 }
 
+// Draw a gear from a circle, eight teeth, and a hole in the middle.
+// The font has no gear character, so the icon is built from shapes.
+// The whole button, not just the icon, is what a tap has to hit.
 static void paintGearButton() {
   lcd.fillRoundRect(GEAR_X, GEAR_Y, GEAR_W, GEAR_H, 8, COL_ROW);
   int cx = GEAR_X + GEAR_W / 2;
@@ -515,6 +669,27 @@ static void paintGearButton() {
   lcd.fillCircle(cx, cy, 3, COL_ROW);
 }
 
+// =============================================================================
+// =============================================================================
+//
+//   EDIT HOW THE SCREENS ARE DRAWN HERE
+//
+//   Each function below draws one full page:
+//     paintHello()       startup greeting
+//     paintMainMenu()    the five feelings
+//     paintSubmenu()     green and orange response buttons
+//     paintSelected()    the instructions for one response
+//     paintSettings()    name, brightness, and grade level
+//     paintNameEditor()  the keyboard
+//   The words themselves are in the text-and-colors block above.
+//   Back, the gear, and the bottom status strip are drawn by the
+//   smaller functions just above this banner.
+//
+// =============================================================================
+// =============================================================================
+
+// Greeting. A tap anywhere except the gear leaves this screen early.
+// After HELLO_MS with no tap, loop() leaves it on its own.
 static void paintHello() {
   lcd.fillScreen(COL_BG);
   lcd.setTextDatum(textdatum_t::middle_center);
@@ -530,6 +705,7 @@ static void paintHello() {
   lcd.setTextDatum(textdatum_t::top_left);
 }
 
+// The five feelings. Each row is one entry in menu[].
 static void paintMainMenu() {
   int height = rowHeightFor(totalLines);
   lcd.fillScreen(COL_BG);
@@ -548,6 +724,8 @@ static void paintMainMenu() {
   lcd.setTextDatum(textdatum_t::top_left);
 }
 
+// Responses for the open feeling. Green rows can be tried alone.
+// Orange rows ask the teacher. The words on the right say which is which.
 static void paintSubmenu() {
   int count = submenuCount();
   int height = rowHeightFor(count);
@@ -574,6 +752,9 @@ static void paintSubmenu() {
   lcd.setTextDatum(textdatum_t::top_left);
 }
 
+// Draw text that wraps onto new lines. A \n in the string forces a
+// break even when the line is not full. Words are copied one at a time
+// into buf because drawString needs a normal C string, not a slice.
 static void drawWrapped(const char *text, int x, int y, int maxWidth) {
   lcd.setTextDatum(textdatum_t::top_left);
   lcd.setTextColor(COL_FG, COL_BG);
@@ -609,6 +790,8 @@ static void drawWrapped(const char *text, int x, int y, int maxWidth) {
     }
     buf[len] = 0;
     int width = lcd.textWidth(buf);
+    // If this word would run past the right edge, and it is not the
+    // first word on the line, drop it to the next line.
     if (cursorX > x && cursorX + width > x + maxWidth) {
       cursorX = x;
       cursorY += lineHeight;
@@ -619,6 +802,8 @@ static void drawWrapped(const char *text, int x, int y, int maxWidth) {
   }
 }
 
+// The detail page for one response: a colored banner, the short label,
+// then the longer instructions.
 static void paintSelected() {
   const Choice *choice = choiceAt(submenuPos);
   uint16_t band = choice->asksTeacher ? COL_ASK : COL_TRY;
@@ -641,6 +826,10 @@ static int gradeRowTop(int index) {
   return GRADE_TOP + index * (GRADE_H + GRADE_GAP);
 }
 
+// Settings page. Brightness and grade save as soon as they change.
+// The name is only saved from the keyboard screen.
+// Green on a grade row means that row is selected and it is the live layout.
+// Orange means it is selected but still a placeholder.
 static void paintSettings() {
   lcd.fillScreen(COL_BG);
   lcd.setTextDatum(textdatum_t::middle_left);
@@ -665,6 +854,7 @@ static void paintSettings() {
   paintTopButton(MINUS_X, BRIGHT_Y, STEP_W, BRIGHT_H, "-", COL_ROW);
   paintTopButton(PLUS_X, BRIGHT_Y, STEP_W, BRIGHT_H, "+", COL_ROW);
   lcd.fillRoundRect(BAR_X, BRIGHT_Y + 8, BAR_W, BRIGHT_H - 16, 8, COL_FOOT);
+  // How much of the bar to fill. At 20% the fill is empty. At 100% it is full.
   int fillW = BAR_W * (brightnessPct - BRIGHT_MIN) / (BRIGHT_MAX - BRIGHT_MIN);
   if (fillW < 0) {
     fillW = 0;
@@ -715,6 +905,8 @@ static void paintSettings() {
   lcd.setTextDatum(textdatum_t::top_left);
 }
 
+// Add one key to the list, unless the list is already full.
+// Returns the new count so the caller can keep appending.
 static int pushKey(KeyHit *out, int n, int action, char ch, int x, int y, int w, int h) {
   if (n >= KEY_MAX) {
     return n;
@@ -728,6 +920,9 @@ static int pushKey(KeyHit *out, int n, int action, char ch, int x, int y, int w,
   return n + 1;
 }
 
+// Build the keyboard rectangles. Painting and tap testing both call
+// this, so a key cannot be drawn in one place and detected in another.
+// The third letter row leaves an eighth slot for Delete.
 static int collectKeys(KeyHit *out) {
   int n = 0;
   const char *rows[] = {"QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"};
@@ -762,6 +957,8 @@ static int collectKeys(KeyHit *out) {
   return n;
 }
 
+// The word or letter drawn on a key. Letter keys show the uppercase
+// character. The name itself is stored in normal title case.
 static void keyLabel(const KeyHit *key, char *buf, int len) {
   if (key->action == KEY_BACKSPACE) {
     snprintf(buf, len, "Del");
@@ -775,6 +972,8 @@ static void keyLabel(const KeyHit *key, char *buf, int len) {
   }
 }
 
+// Keyboard page. Save is green only when the name is not empty.
+// Back throws away what was typed and returns to settings.
 static void paintNameEditor() {
   lcd.fillScreen(COL_BG);
   lcd.setTextDatum(textdatum_t::middle_left);
@@ -796,6 +995,7 @@ static void paintNameEditor() {
   } else {
     lcd.drawString(nameEdit, FIELD_X + 20, midY);
     int textW = lcd.textWidth(nameEdit);
+    // A thin cursor just after the letters, so it is obvious where the next one goes.
     lcd.fillRect(FIELD_X + 26 + textW, FIELD_Y + 18, 3, 28, COL_FG);
   }
 
@@ -813,6 +1013,16 @@ static void paintNameEditor() {
   lcd.setTextDatum(textdatum_t::top_left);
 }
 
+// =============================================================================
+// =============================================================================
+//
+//   END OF SCREEN DRAWING
+//
+// =============================================================================
+// =============================================================================
+
+// Capitalize the first letter, and the letter after a space, hyphen,
+// or apostrophe, so "mary ann" becomes "Mary Ann" and "o'brien" becomes "O'Brien".
 static bool nameNeedsCapital() {
   int n = strlen(nameEdit);
   if (n == 0) {
@@ -822,6 +1032,9 @@ static bool nameNeedsCapital() {
   return prev == ' ' || prev == '-' || prev == '\'';
 }
 
+// Change nameEdit for one key, then redraw. A key that cannot be
+// used (name already full, or a second space in a row) returns
+// without redrawing.
 static void applyKey(const KeyHit *key) {
   int n = strlen(nameEdit);
   if (key->action == KEY_BACKSPACE) {
@@ -838,6 +1051,9 @@ static void applyKey(const KeyHit *key) {
     if ((c == ' ' || c == '-' || c == '\'') && (n == 0 || nameEdit[n - 1] == c)) {
       return;
     }
+    // Keys are labeled in capitals. Subtracting 'A' and adding 'a'
+    // turns that capital into the lowercase letter, unless this
+    // spot is the start of a word.
     if (c >= 'A' && c <= 'Z' && !nameNeedsCapital()) {
       c = c - 'A' + 'a';
     }
@@ -849,6 +1065,8 @@ static void applyKey(const KeyHit *key) {
   paintNameEditor();
 }
 
+// Remove spaces at either end so a name made of only spaces is empty,
+// and Save can refuse it.
 static void trimName(char *text) {
   int n = strlen(text);
   while (n > 0 && text[n - 1] == ' ') {
@@ -868,11 +1086,15 @@ static void trimName(char *text) {
   }
 }
 
+// Remember which screen is open, then draw it. The remember step
+// has to happen first so a tap during the draw is handled correctly
+// on the next loop.
 static void showMainMenu() {
   currentScreen = SCREEN_MENU;
   paintMainMenu();
 }
 
+// Open the response list for feeling number index.
 static void openSubmenu(int index) {
   selectedMenu = index;
   submenuPos = 0;
@@ -880,12 +1102,15 @@ static void openSubmenu(int index) {
   paintSubmenu();
 }
 
+// Open the detail page for response number index in the current list.
 static void showSelectedItem(int index) {
   submenuPos = index;
   currentScreen = SCREEN_SELECTED;
   paintSelected();
 }
 
+// Detail page goes back to its response list. The response list
+// goes back to the five feelings. Settings does not use this.
 static void goBack() {
   if (currentScreen == SCREEN_SELECTED) {
     currentScreen = SCREEN_SUBMENU;
@@ -895,6 +1120,9 @@ static void goBack() {
   }
 }
 
+// Leave settings. If the name changed, or settings was opened from
+// the greeting, show the greeting again so the new name can be seen.
+// screenMs is reset so that greeting gets a fresh two seconds.
 static void showReturnScreen() {
   int dest = returnScreen;
   if (nameDirty || dest == SCREEN_HELLO || dest == SCREEN_SETTINGS || dest == SCREEN_NAME) {
@@ -914,23 +1142,29 @@ static void showReturnScreen() {
   }
 }
 
+// Remember the screen we came from, then draw settings.
 static void openSettings() {
   returnScreen = currentScreen;
   currentScreen = SCREEN_SETTINGS;
   paintSettings();
 }
 
+// Start the keyboard from the name that is already saved.
+// Typing changes nameEdit only, until Save.
 static void openNameEditor() {
   copyName(nameEdit, studentName);
   currentScreen = SCREEN_NAME;
   paintNameEditor();
 }
 
+// Drop the typed name and go back to settings.
 static void closeNameEditor() {
   currentScreen = SCREEN_SETTINGS;
   paintSettings();
 }
 
+// Keep the typed name, write it to flash, and return to settings.
+// An empty name is refused and the keyboard stays open.
 static void saveNameEdit() {
   trimName(nameEdit);
   if (nameEdit[0] == 0) {
@@ -943,6 +1177,9 @@ static void saveNameEdit() {
   closeNameEditor();
 }
 
+// Snap to a step of 10, then update the light, the flash, and the
+// settings drawing. Do nothing if the step did not actually change,
+// so a repeated tap on the same spot does not redraw.
 static void setBrightnessPct(int pct) {
   if (pct < BRIGHT_MIN) {
     pct = BRIGHT_MIN;
@@ -960,6 +1197,8 @@ static void setBrightnessPct(int pct) {
   paintSettings();
 }
 
+// A tap on the bar. The left end is 20% and the right end is 100%.
+// The last line rounds to the nearest 10 so the bar matches the + and - buttons.
 static int brightnessFromX(int x) {
   int rel = x - BAR_X;
   if (rel < 0) {
@@ -972,6 +1211,8 @@ static int brightnessFromX(int x) {
   return ((pct + 5) / 10) * 10;
 }
 
+// Save which grade row was tapped and redraw. The student screens
+// do not switch yet. Only the settings page shows the new choice.
 static void setGrade(int index) {
   if (index < 0 || index >= GRADE_COUNT || index == gradeLevel) {
     return;
@@ -981,28 +1222,41 @@ static void setGrade(int index) {
   paintSettings();
 }
 
+// Runs once. Order matters: the expander and the saved settings are
+// ready before the panel starts, and the backlight level is applied
+// after init() because init() is what attaches PWM to pin 2.
 void setup() {
+  // Light the backlight immediately so the panel is not black during
+  // the rest of startup. applyBrightness() replaces this with PWM.
   pinMode(PIN_BL, OUTPUT);
   digitalWrite(PIN_BL, HIGH);
 
   initExpander();
-  loadSettings();
-  lcd.init();
-  lcd.setRotation(0);
+  loadSettings();          // name, brightness, and grade from the last run
+  lcd.init();              // start the panel with the wiring stored above
+  lcd.setRotation(0);      // 0 matches the touch map. Another value would move taps off the buttons.
   applyBrightness();
 
-  RemoteXY_Init();
-  screenMs = millis();
+  RemoteXY_Init();       // start the Wi-Fi hotspot and the phone listener
+  screenMs = millis();    // start the two-second greeting timer
   paintHello();
 }
 
+// Repeats forever. Each pass gives the phone a turn, maybe advances
+// the greeting, refreshes the footer if the phone changed, then
+// handles at most one new finger tap.
 void loop() {
+  // Must run every pass. If it is skipped, the phone app disconnects.
   RemoteXYEngine.handler();
 
+  // Greeting timer. Opening settings leaves SCREEN_HELLO, so the timer
+  // does not fire while the teacher is still in settings.
   if (currentScreen == SCREEN_HELLO && (millis() - screenMs) >= HELLO_MS) {
     showMainMenu();
   }
 
+  // Settings and the keyboard do not use the phone footer. Drawing it
+  // there would cover the bottom of those pages.
   if (currentScreen != SCREEN_HELLO &&
       currentScreen != SCREEN_SETTINGS &&
       currentScreen != SCREEN_NAME &&
@@ -1012,6 +1266,9 @@ void loop() {
     paintStatus();
   }
 
+  // getTouch is true the whole time a finger is down, and it fills tx, ty.
+  // touchWasDown remembers the previous pass, so we act only on the
+  // moment the finger first lands. TAP_GAP_MS blocks a bounce right after.
   int32_t tx = 0;
   int32_t ty = 0;
   bool touchDown = lcd.getTouch(&tx, &ty);
@@ -1021,10 +1278,13 @@ void loop() {
                         currentScreen == SCREEN_MENU ||
                         currentScreen == SCREEN_SUBMENU ||
                         currentScreen == SCREEN_SELECTED;
+    // The gear is checked before the rest of the page. On the greeting,
+    // any other tap skips ahead to the feelings list.
     if (onGearScreen && inBox(tx, ty, GEAR_X, GEAR_Y, GEAR_W, GEAR_H)) {
       openSettings();
     } else if (currentScreen == SCREEN_HELLO) {
       showMainMenu();
+    // Feelings list: the row under the finger opens that feeling.
     } else if (currentScreen == SCREEN_MENU) {
       int height = rowHeightFor(totalLines);
       for (int i = 0; i < totalLines; i++) {
@@ -1033,6 +1293,7 @@ void loop() {
           break;
         }
       }
+    // Response list: Back, or the row under the finger.
     } else if (currentScreen == SCREEN_SUBMENU) {
       if (inBox(tx, ty, BACK_X, BACK_Y, BACK_W, BACK_H)) {
         goBack();
@@ -1046,10 +1307,13 @@ void loop() {
           }
         }
       }
+    // Detail page: only Back does anything. Other taps are ignored.
     } else if (currentScreen == SCREEN_SELECTED) {
       if (inBox(tx, ty, BACK_X, BACK_Y, BACK_W, BACK_H)) {
         goBack();
       }
+    // Settings: Done, the name row, brightness, or a grade row.
+    // The checks run in that order so a tap cannot hit two controls.
     } else if (currentScreen == SCREEN_SETTINGS) {
       if (inBox(tx, ty, DONE_X, DONE_Y, DONE_W, DONE_H)) {
         showReturnScreen();
@@ -1069,6 +1333,7 @@ void loop() {
           }
         }
       }
+    // Keyboard: Save, Back, or whichever key contains the tap.
     } else if (currentScreen == SCREEN_NAME) {
       if (inBox(tx, ty, DONE_X, DONE_Y, DONE_W, DONE_H)) {
         saveNameEdit();
@@ -1086,5 +1351,6 @@ void loop() {
       }
     }
   }
+  // Remember this pass so the next one can tell a new press from a held finger.
   touchWasDown = touchDown;
 }
