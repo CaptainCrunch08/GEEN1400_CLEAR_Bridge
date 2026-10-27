@@ -12,15 +12,19 @@
   USB-C on the CrowPanel is the program port. If upload sits on
   "Connecting...", hold BOOT, tap RST, and release BOOT.
 
-  RemoteXY opens a Wi-Fi hotspot on the ESP32-S3. The HM-10 stays unplugged.
-  Join the Wi-Fi network RemoteXY, password 12345678, then open the app.
+  A student selection is sent by radio to the teacher device. There is
+  no phone app. The teacher answers Yes or No, and that answer shows
+  along the bottom of this panel.
 
   Green buttons are something the student can try.
-  Orange buttons ask the teacher, for approval on the phone later.
+  Orange buttons ask the teacher. Both are sent, so the teacher knows
+  a student needs help.
 
   The gear in the top right opens settings. A teacher can change the
-  name on the startup screen, the brightness, and the grade-level look.
-  Grades 2-4 is the screen students see. The other grades are placeholders.
+  name on the startup screen, the brightness, and the age-group look.
+  K uses pictures and one-word buttons. Grades 1-2 use big
+  letters and only three responses. Grades 3-4 is the full short-sentence
+  screen. Grade 5 uses smaller type and shows more of the instructions.
 
   How this sketch runs:
   setup() runs once at power-on. loop() then repeats forever.
@@ -31,50 +35,16 @@
   still there after the panel restarts.
 */
 
-// Tell RemoteXY to be its own Wi-Fi network, not to join the school Wi-Fi.
-// The phone joins that network and opens the RemoteXY app.
-#define REMOTEXY_MODE__WIFI_POINT
-
 #include <WiFi.h>
-
-// Name and password of the hotspot the panel creates. 6377 is the port
-// the RemoteXY phone app expects. These must match the app.
-#define REMOTEXY_WIFI_SSID "RemoteXY"
-#define REMOTEXY_WIFI_PASSWORD "12345678"
-#define REMOTEXY_SERVER_PORT 6377
-
-#include <RemoteXY.h>
+#include <esp_now.h>
+#include <esp_wifi.h>
+#include <string.h>
 #include <Wire.h>          // I2C bus, used by the touch chip and the small expander
 #include <Preferences.h>   // saves a few settings in flash across restarts
 #include <LovyanGFX.hpp>   // draws text, rectangles, and reads the touch panel
 #include <lgfx/v1/platforms/esp32s3/Panel_RGB.hpp>
 #include <lgfx/v1/platforms/esp32s3/Bus_RGB.hpp>
-
-// The bytes below were exported from the RemoteXY editor. They describe
-// the phone screen. Edit that screen in the editor, then paste a new
-// export here. Do not change individual numbers by hand.
-#pragma pack(push, 1)
-uint8_t const PROGMEM RemoteXY_CONF_PROGMEM[] = {  // 129 bytes V19
-  255,2,0,3,0,122,0,19,0,0,0,0,31,1,106,200,1,1,5,0,
-  3,12,96,26,71,3,2,26,12,10,8,48,10,193,30,26,83,116,117,100,
-  101,110,116,32,49,0,83,116,117,100,101,110,116,32,50,0,83,116,117,100,
-  101,110,116,32,51,0,74,49,102,46,10,12,2,30,37,64,82,101,115,112,
-  111,110,115,101,32,49,0,74,49,127,45,10,12,2,30,37,64,82,101,115,
-  112,111,110,115,101,32,50,0,74,49,151,45,10,12,2,30,37,64,82,101,
-  115,112,111,110,115,101,32,51,0
-};
-
-// Live values from the phone. The library fills these in.
-// loop() only reads them. The packing lines keep the byte order RemoteXY needs.
-struct {
-  uint8_t selectorSwitch_01; // which student the phone picked: 0 none, 1, 2, or 3
-  uint8_t optionSelector_01; // which response the phone picked: 0 none, 1, 2, or 3
-  uint8_t strings_01; // from 0 to 1, sent back to the phone; this sketch leaves it alone
-  uint8_t strings_02; // from 0 to 1
-  uint8_t strings_03; // from 0 to 1
-  uint8_t connect_flag;  // 1 when the phone app is connected, otherwise 0
-} RemoteXY;
-#pragma pack(pop)
+#include "CLEAR_Link.h"    // radio message shared with the teacher sketch
 
 // LGFX is the display driver. The constructor only stores the wiring.
 // Nothing is drawn until lcd.init() in setup().
@@ -258,8 +228,13 @@ static const int GRADE_TOP = 230;
 static const int GRADE_H = 56;
 static const int GRADE_GAP = 6;
 static const int GRADE_COUNT = 4;
-// Index into gradeOptions of the layout students actually see today.
-static const int GRADE_LIVE = 2;
+// These match the four rows in gradeOptions, top to bottom.
+static const int GRADE_K = 0;
+static const int GRADE_12 = 1;
+static const int GRADE_34 = 2;
+static const int GRADE_5 = 3;
+// First boot uses grades 3-4 until a teacher picks another row.
+static const int GRADE_LIVE = GRADE_34;
 
 static const int FIELD_X = 24;
 static const int FIELD_Y = 68;
@@ -288,6 +263,9 @@ static const int KEY_SPACE = 4;
 //   Change the text in quotes to change what a student reads.
 //   true  = orange "Ask teacher" button
 //   false = green "Try this" button
+//   The last item on a response line is the one word K shows.
+//   nullptr hides that button for K.
+//   Grades 1-2 show only the first three responses in each list.
 //   If you add or remove a response, also change the matching count below
 //   (anxietyCount, boredomCount, and the others).
 //
@@ -307,20 +285,18 @@ static const uint16_t COL_TRY = 0x6F9B;
 static const uint16_t COL_ASK = 0xFE70;
 static const uint16_t COL_FOOT = 0xE73C;
 
-// One row in the grade list. live is true only for the layout that
-// is really on the student screens. The others are saved choices for later.
+// One age group in settings. about is the one-line description of its look.
+// Picking a row changes the feelings screens, not only this list.
 struct GradeOption {
   const char *label;
   const char *about;
-  bool live;
 };
 
-// Stored for a later screen swap. Only Grades 2-4 is drawn for students today.
 static const GradeOption gradeOptions[] = {
-  {"Kindergarten", "Pictures and very few words", false},
-  {"Grade 1", "Big letters and few buttons", false},
-  {"Grades 2-4", "Short sentences, this screen", true},
-  {"Grade 5", "More reading, smaller type", false}
+  {"K", "Pictures and very few words"},
+  {"1 - 2", "Big letters and few buttons"},
+  {"3 - 4", "Short sentences"},
+  {"5", "More reading, smaller type"}
 };
 
 // One response under a feeling.
@@ -328,10 +304,12 @@ static const GradeOption gradeOptions[] = {
 // asksTeacher true means the button is orange and needs a teacher.
 // false means the student can try it alone, and the button is green.
 // A \n inside help starts a new line on the detail screen.
+// little is the one word K shows. nullptr hides the button for K.
 struct Choice {
   const char *label;
   const char *help;
   bool asksTeacher;
+  const char *little;
 };
 
 // The five feelings, in the same order as the lists below.
@@ -346,41 +324,41 @@ static const char *menu[] = {
 // Responses for each feeling, in menu[] order.
 // Worried is index 0. The last true/false on each line is asksTeacher.
 static const Choice anxietyMenu[] = {
-  {"Write my own words", "Your teacher can say yes or no. This will go to the teacher phone later.", true},
-  {"I need a walk", "Ask your teacher if you can take a short walk.", true},
-  {"Help me calm down", "Sit down.\nPut your feet on the floor.\nOpen your hands.\nBreathe in, then breathe out.\nDo this 5 times.", false},
-  {"Talk to someone", "Ask your teacher if you can talk with someone.", true},
-  {"Breathing", "Breathe in while you count to 4.\nHold for 2.\nBreathe out while you count to 4.\nDo this 5 times.", false},
-  {"Talk after class", "Ask to meet your teacher after class.", true}
+  {"Write my own words", "Your teacher can say yes or no. They see it on their device.", true, nullptr},
+  {"I need a walk", "Ask your teacher if you can take a short walk.", true, nullptr},
+  {"Help me calm down", "Sit down.\nPut your feet on the floor.\nOpen your hands.\nBreathe in, then breathe out.\nDo this 5 times.", false, "Calm"},
+  {"Talk to someone", "Ask your teacher if you can talk with someone.", true, nullptr},
+  {"Breathing", "Breathe in while you count to 4.\nHold for 2.\nBreathe out while you count to 4.\nDo this 5 times.", false, "Breathe"},
+  {"Talk after class", "Ask to meet your teacher after class.", true, nullptr}
 };
 // Boredom. menu index 1.
 static const Choice boredomMenu[] = {
-  {"Write my own words", "Your teacher can say yes or no. This will go to the teacher phone later.", true},
-  {"Draw how I feel", "Draw a picture of how you feel. You can show it when you are ready.", false},
-  {"Quiet looking game", "Find 5 blue things.\nThen find 4 round things.\nThen find 3 soft things.", false}
+  {"Write my own words", "Your teacher can say yes or no. They see it on their device.", true, nullptr},
+  {"Draw how I feel", "Draw a picture of how you feel. You can show it when you are ready.", false, "Draw"},
+  {"Quiet looking game", "Find 5 blue things.\nThen find 4 round things.\nThen find 3 soft things.", false, "Look"}
 };
 // "I don't get it". menu index 2.
 static const Choice understandingMenu[] = {
-  {"Write my own words", "Your teacher can say yes or no. This will go to the teacher phone later.", true},
-  {"Draw the problem", "Draw the problem.\nCircle the part you do not understand.", false},
-  {"Please say that again", "Ask your teacher to explain the last part again.", true},
-  {"Explain this question", "Ask your teacher to explain this question.", true},
-  {"Can we practice one?", "Ask for one example or practice problem.", true}
+  {"Write my own words", "Your teacher can say yes or no. They see it on their device.", true, nullptr},
+  {"Draw the problem", "Draw the problem.\nCircle the part you do not understand.", false, "Draw"},
+  {"Please say that again", "Ask your teacher to explain the last part again.", true, "Again"},
+  {"Explain this question", "Ask your teacher to explain this question.", true, nullptr},
+  {"Can we practice one?", "Ask for one example or practice problem.", true, nullptr}
 };
 // Mad. menu index 3.
 static const Choice angerMenu[] = {
-  {"Write my own words", "Your teacher can say yes or no. This will go to the teacher phone later.", true},
-  {"I need a walk", "Ask your teacher if you can take a short walk.", true},
-  {"Breathing", "Breathe in while you count to 4.\nHold for 2.\nBreathe out while you count to 4.\nDo this 5 times.", false},
-  {"Talk to someone", "Ask your teacher if you can talk with someone.", true},
-  {"Help me cool down", "Stop.\nPut your hands in your lap.\nCount slowly to 10.\nTake one slow breath.", false}
+  {"Write my own words", "Your teacher can say yes or no. They see it on their device.", true, nullptr},
+  {"I need a walk", "Ask your teacher if you can take a short walk.", true, nullptr},
+  {"Breathing", "Breathe in while you count to 4.\nHold for 2.\nBreathe out while you count to 4.\nDo this 5 times.", false, "Breathe"},
+  {"Talk to someone", "Ask your teacher if you can talk with someone.", true, nullptr},
+  {"Help me cool down", "Stop.\nPut your hands in your lap.\nCount slowly to 10.\nTake one slow breath.", false, "Stop"}
 };
 // Uncomfortable. menu index 4.
 static const Choice uncomfortableMenu[] = {
-  {"Write my own words", "Your teacher can say yes or no. This will go to the teacher phone later.", true},
-  {"I need a walk", "Ask your teacher if you can take a short walk.", true},
-  {"Please help me", "Ask your teacher for help with this problem.", true},
-  {"Can I see an example?", "Ask your teacher to show you one example.", true}
+  {"Write my own words", "Your teacher can say yes or no. They see it on their device.", true, nullptr},
+  {"I need a walk", "Ask your teacher if you can take a short walk.", true, "Walk"},
+  {"Please help me", "Ask your teacher for help with this problem.", true, "Help"},
+  {"Can I see an example?", "Ask your teacher to show you one example.", true, nullptr}
 };
 
 // How many buttons each list has. These must match the arrays above.
@@ -425,9 +403,13 @@ static unsigned long screenMs = 0;    // when the greeting was shown
 static unsigned long tapMs = 0;       // when the last accepted tap happened
 static bool touchWasDown = false;     // so one press counts once, not every loop
 static bool nameDirty = false;        // name changed, so Done should show the greeting
-static uint8_t shownConnect = 0xFF;   // last phone values drawn in the footer
-static uint8_t shownSwitch = 0xFF;    // 0xFF means "not drawn yet", so the first
-static uint8_t shownOption = 0xFF;    // real value always gets painted
+static bool linkReady = false;        // true after the teacher radio starts
+static bool noticeSent = false;       // true after a selection is handed to the radio
+static uint32_t nextEventId = 1;      // counts selections so a reply finds the right one
+static uint32_t waitingId = 0;        // event the panel is waiting on
+static uint8_t teacherReply = CLEAR_ANSWER_NONE;
+static ClearNote pendingReply;
+static volatile bool replyReady = false;
 static char studentName[NAME_MAX + 1] = "Connor"; // name on the greeting
 static char nameEdit[NAME_MAX + 1] = "Connor";    // name being typed, not saved yet
 static int brightnessPct = 80;
@@ -550,43 +532,96 @@ static void saveSettings() {
   prefs.end();
 }
 
-// Phone selectors use 1, 2, and 3. Anything else, including 0, prints a dash.
-static void paintChoice(uint8_t value, const char *one, const char *two, const char *three) {
-  if (value == 1) {
-    lcd.print(one);
-  } else if (value == 2) {
-    lcd.print(two);
-  } else if (value == 3) {
-    lcd.print(three);
-  } else {
-    lcd.print("-");
+// Copy text into one of the fixed radio fields and always end with a 0.
+static void copyField(char *dest, int size, const char *src) {
+  int i = 0;
+  if (src == nullptr) {
+    src = "";
   }
+  while (src[i] != 0 && i < size - 1) {
+    dest[i] = src[i];
+    i++;
+  }
+  dest[i] = 0;
 }
 
-// Redraw only the strip along the bottom. "Ready" means no phone is
-// connected. A connected phone shows the student and response it picked.
-// The shown* variables remember what we drew, so loop() can skip this
-// when the phone has not changed anything.
+// The radio task calls this when a packet arrives. It only stores the
+// packet. Drawing and the screen stay in loop(), where they are safe.
+static void takeLinkPacket(const uint8_t *data, int len) {
+  if (len != (int)sizeof(ClearNote)) {
+    return;
+  }
+  noInterrupts();
+  memcpy(&pendingReply, data, sizeof(ClearNote));
+  pendingReply.student[sizeof(pendingReply.student) - 1] = 0;
+  pendingReply.feeling[sizeof(pendingReply.feeling) - 1] = 0;
+  pendingReply.choice[sizeof(pendingReply.choice) - 1] = 0;
+  replyReady = true;
+  interrupts();
+}
+
+// ESP32 board packages 2 and 3 name this callback differently.
+#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
+static void onLinkRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
+  (void)info;
+  takeLinkPacket(data, len);
+}
+#else
+static void onLinkRecv(const uint8_t *mac, const uint8_t *data, int len) {
+  (void)mac;
+  takeLinkPacket(data, len);
+}
+#endif
+
+// Start the radio that reaches the teacher device. This is not school
+// Wi-Fi. Both devices stay on channel 1 and send to every listener.
+static void startTeacherLink() {
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  delay(100);
+  esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
+  if (esp_now_init() != ESP_OK) {
+    linkReady = false;
+    return;
+  }
+  esp_now_peer_info_t peer = {};
+  memcpy(peer.peer_addr, clearBroadcast, 6);
+  peer.channel = 0;
+  peer.encrypt = false;
+  peer.ifidx = WIFI_IF_STA;
+  if (esp_now_add_peer(&peer) != ESP_OK) {
+    linkReady = false;
+    return;
+  }
+  esp_now_register_recv_cb(onLinkRecv);
+  linkReady = true;
+}
+
+// Redraw only the strip along the bottom. It says whether the last
+// selection was sent, and then Yes or No when the teacher answers.
 static void paintStatus() {
   lcd.fillRect(0, 420, 800, 60, COL_FOOT);
   lcd.setTextDatum(textdatum_t::top_left);
   lcd.setFont(&fonts::Font2);
   lcd.setTextColor(COL_FG, COL_FOOT);
   lcd.setCursor(24, 440);
-  if (RemoteXY.connect_flag) {
-    paintChoice(RemoteXY.selectorSwitch_01, "Student 1", "Student 2", "Student 3");
-    lcd.print("    ");
-    paintChoice(RemoteXY.optionSelector_01, "Response 1", "Response 2", "Response 3");
+  if (teacherReply == CLEAR_ANSWER_YES) {
+    lcd.print("Teacher said yes");
+  } else if (teacherReply == CLEAR_ANSWER_NO) {
+    lcd.print("Teacher said no");
+  } else if (noticeSent) {
+    lcd.print("Sent to the teacher");
+  } else if (waitingId != 0) {
+    lcd.print("Could not send");
+  } else if (!linkReady) {
+    lcd.print("Teacher radio is off");
   } else {
     lcd.print("Ready");
   }
-  shownConnect = RemoteXY.connect_flag;
-  shownSwitch = RemoteXY.selectorSwitch_01;
-  shownOption = RemoteXY.optionSelector_01;
 }
 
-// How many response buttons belong to the feeling that was tapped.
-static int submenuCount() {
+// How many responses the open feeling has before the age group hides any.
+static int fullMenuCount() {
   switch (selectedMenu) {
     case 0: return anxietyCount;
     case 1: return boredomCount;
@@ -597,10 +632,8 @@ static int submenuCount() {
   return 0;
 }
 
-// The response at this row for the feeling currently open.
-// A bad feeling index falls back to the first worried response
-// so the screen still has something safe to draw.
-static const Choice *choiceAt(int position) {
+// The response at a raw index in the open feeling, ignoring age group.
+static const Choice *choiceFromMenu(int position) {
   switch (selectedMenu) {
     case 0: return &anxietyMenu[position];
     case 1: return &boredomMenu[position];
@@ -611,14 +644,94 @@ static const Choice *choiceAt(int position) {
   return &anxietyMenu[0];
 }
 
+// K keeps only the one-word buttons. Grades 1-2 keep the first
+// three. Grades 3-4 and grade 5 keep the whole list.
+static bool choiceVisible(int position) {
+  if (gradeLevel == GRADE_K) {
+    return choiceFromMenu(position)->little != nullptr;
+  }
+  if (gradeLevel == GRADE_12) {
+    return position < 3;
+  }
+  return true;
+}
+
+// How many response buttons the student actually sees for this age group.
+static int submenuCount() {
+  int full = fullMenuCount();
+  int count = 0;
+  for (int i = 0; i < full; i++) {
+    if (choiceVisible(i)) {
+      count++;
+    }
+  }
+  return count;
+}
+
+// The response at a visible row. position 0 is the first button the
+// student can see, which may not be the first item stored in the list.
+static const Choice *choiceAt(int position) {
+  int full = fullMenuCount();
+  int seen = 0;
+  for (int i = 0; i < full; i++) {
+    if (!choiceVisible(i)) {
+      continue;
+    }
+    if (seen == position) {
+      return choiceFromMenu(i);
+    }
+    seen++;
+  }
+  return choiceFromMenu(0);
+}
+
+// The word drawn on a response button.
+static const char *choiceLabel(const Choice *choice) {
+  if (gradeLevel == GRADE_K && choice->little != nullptr) {
+    return choice->little;
+  }
+  return choice->label;
+}
+
+// K uses a shorter feeling name next to the picture.
+static const char *feelingName(int index) {
+  static const char *kNames[] = {"Worried", "Bored", "Help", "Mad", "Upset"};
+  if (gradeLevel == GRADE_K) {
+    return kNames[index];
+  }
+  return menu[index];
+}
+
+// First sentence of a help string, up to a newline. Grade 5 prints this
+// on the response button so there is more to read before the next page.
+static void firstSentence(const char *text, char *buf, int len) {
+  int n = 0;
+  while (text[n] && text[n] != '\n' && n < len - 1) {
+    buf[n] = text[n];
+    n++;
+  }
+  buf[n] = 0;
+}
+
 // Share the list area evenly across however many buttons there are.
-// Cap the height so a short list, like Boredom's three items, does
-// not turn into three huge bars.
+// Younger grades get a higher cap so the big letters have room.
+// Grade 5 gets a slightly higher cap so a second line of reading fits.
 static int rowHeightFor(int count) {
+  if (count < 1) {
+    return 64;
+  }
   int gaps = (count > 1) ? (count - 1) * ROW_GAP : 0;
   int height = (LIST_BOTTOM - LIST_TOP - gaps) / count;
-  if (height > 64) {
-    height = 64;
+  int cap = 64;
+  if (gradeLevel == GRADE_K) {
+    cap = 72;
+  } else if (gradeLevel == GRADE_12) {
+    cap = 96;
+  } else if (gradeLevel == GRADE_5) {
+    cap = 78;
+  }
+  if (height > cap) {
+    height = cap;
   }
   return height;
 }
@@ -648,6 +761,39 @@ static void paintTopButton(int x, int y, int w, int h, const char *label, uint16
 
 static void paintBackButton() {
   paintTopButton(BACK_X, BACK_Y, BACK_W, BACK_H, "Back", COL_ROW);
+}
+
+// A simple face for the K feelings list. which matches menu[]:
+// 0 worried, 1 bored, 2 help, 3 mad, 4 upset. Any other number is a
+// plain smile, used on the greeting. The word sits beside the face.
+static void drawFeelingFace(int which, int cx, int cy) {
+  lcd.fillCircle(cx, cy, 26, COL_FG);
+  lcd.fillCircle(cx, cy, 22, COL_BG);
+  lcd.fillCircle(cx - 8, cy - 4, 3, COL_FG);
+  lcd.fillCircle(cx + 8, cy - 4, 3, COL_FG);
+  if (which == 1) {
+    // Bored: cover the top of each eye so they look half closed.
+    lcd.fillRect(cx - 12, cy - 10, 9, 5, COL_BG);
+    lcd.fillRect(cx + 4, cy - 10, 9, 5, COL_BG);
+  }
+  if (which == 0) {
+    lcd.drawLine(cx - 14, cy - 10, cx - 3, cy - 16, COL_FG);
+    lcd.drawLine(cx + 14, cy - 10, cx + 3, cy - 16, COL_FG);
+  } else if (which == 3) {
+    lcd.drawLine(cx - 14, cy - 16, cx - 3, cy - 10, COL_FG);
+    lcd.drawLine(cx + 14, cy - 16, cx + 3, cy - 10, COL_FG);
+  }
+  if (which == 1) {
+    lcd.drawLine(cx - 8, cy + 8, cx + 8, cy + 8, COL_FG);
+  } else if (which == 2) {
+    lcd.drawCircle(cx, cy + 9, 4, COL_FG);
+  } else if (which == 3 || which == 4) {
+    lcd.drawLine(cx - 8, cy + 12, cx, cy + 7, COL_FG);
+    lcd.drawLine(cx, cy + 7, cx + 8, cy + 12, COL_FG);
+  } else {
+    lcd.drawLine(cx - 8, cy + 6, cx, cy + 11, COL_FG);
+    lcd.drawLine(cx, cy + 11, cx + 8, cy + 6, COL_FG);
+  }
 }
 
 // Draw a gear from a circle, eight teeth, and a hole in the middle.
@@ -682,6 +828,8 @@ static void paintGearButton() {
 //     paintSettings()    name, brightness, and grade level
 //     paintNameEditor()  the keyboard
 //   The words themselves are in the text-and-colors block above.
+//   The age group picked in settings changes type size, pictures,
+//   and how many response buttons these functions draw.
 //   Back, the gear, and the bottom status strip are drawn by the
 //   smaller functions just above this banner.
 //
@@ -693,31 +841,65 @@ static void paintGearButton() {
 static void paintHello() {
   lcd.fillScreen(COL_BG);
   lcd.setTextDatum(textdatum_t::middle_center);
-  lcd.setFont(&fonts::Font4);
   lcd.setTextColor(COL_FG, COL_BG);
   char greeting[NAME_MAX + 8];
   snprintf(greeting, sizeof(greeting), "Hi, %s", studentName);
-  lcd.drawString(greeting, 400, 180);
-  lcd.setFont(&fonts::Font2);
-  lcd.drawString("How do you feel?", 400, 240);
+  if (gradeLevel == GRADE_5) {
+    lcd.setFont(&fonts::Font2);
+    lcd.drawString(greeting, 400, 170);
+    lcd.drawString("How do you feel? Read the choices, then pick one.", 400, 210);
+  } else if (gradeLevel == GRADE_K) {
+    lcd.setFont(&fonts::Font4);
+    lcd.drawString(greeting, 400, 150);
+    lcd.setFont(&fonts::Font2);
+    lcd.drawString("Pick a face", 400, 200);
+    drawFeelingFace(5, 400, 280);
+  } else {
+    lcd.setFont(&fonts::Font4);
+    lcd.drawString(greeting, 400, 180);
+    if (gradeLevel == GRADE_12) {
+      lcd.drawString("How do you feel?", 400, 240);
+    } else {
+      lcd.setFont(&fonts::Font2);
+      lcd.drawString("How do you feel?", 400, 240);
+    }
+  }
   paintStatus();
   paintGearButton();
   lcd.setTextDatum(textdatum_t::top_left);
 }
 
 // The five feelings. Each row is one entry in menu[].
+// K draws a face and one short word. Grades 1-2 use the large
+// font in taller rows. Grade 5 uses the small font.
 static void paintMainMenu() {
   int height = rowHeightFor(totalLines);
   lcd.fillScreen(COL_BG);
   lcd.setTextDatum(textdatum_t::middle_left);
-  lcd.setFont(&fonts::Font4);
   lcd.setTextColor(COL_FG, COL_BG);
-  lcd.drawString("How do you feel?", 24, 32);
+  if (gradeLevel == GRADE_5) {
+    lcd.setFont(&fonts::Font2);
+  } else {
+    lcd.setFont(&fonts::Font4);
+  }
+  lcd.drawString(gradeLevel == GRADE_K ? "How are you?" : "How do you feel?", 24, 32);
   for (int i = 0; i < totalLines; i++) {
     int top = rowTopFor(i, totalLines);
     lcd.fillRoundRect(ROW_X, top, ROW_W, height, 12, COL_ROW);
     lcd.setTextColor(COL_FG, COL_ROW);
-    lcd.drawString(menu[i], ROW_X + 24, top + height / 2);
+    lcd.setTextDatum(textdatum_t::middle_left);
+    if (gradeLevel == GRADE_K) {
+      drawFeelingFace(i, ROW_X + 44, top + height / 2);
+      lcd.setFont(&fonts::Font4);
+      lcd.setTextColor(COL_FG, COL_ROW);
+      lcd.drawString(feelingName(i), ROW_X + 88, top + height / 2);
+    } else if (gradeLevel == GRADE_5) {
+      lcd.setFont(&fonts::Font2);
+      lcd.drawString(menu[i], ROW_X + 24, top + height / 2);
+    } else {
+      lcd.setFont(&fonts::Font4);
+      lcd.drawString(menu[i], ROW_X + 24, top + height / 2);
+    }
   }
   paintStatus();
   paintGearButton();
@@ -725,27 +907,52 @@ static void paintMainMenu() {
 }
 
 // Responses for the open feeling. Green rows can be tried alone.
-// Orange rows ask the teacher. The words on the right say which is which.
+// Orange rows ask the teacher. K shows one word and no side
+// label. Grades 1-2 use the large font. Grade 5 adds the first line of
+// the instructions on the button.
 static void paintSubmenu() {
   int count = submenuCount();
   int height = rowHeightFor(count);
   lcd.fillScreen(COL_BG);
   lcd.setTextDatum(textdatum_t::middle_left);
-  lcd.setFont(&fonts::Font4);
   lcd.setTextColor(COL_FG, COL_BG);
-  lcd.drawString(menu[selectedMenu], 24, 32);
+  if (gradeLevel == GRADE_5) {
+    lcd.setFont(&fonts::Font2);
+  } else {
+    lcd.setFont(&fonts::Font4);
+  }
+  lcd.drawString(feelingName(selectedMenu), 24, 32);
   paintBackButton();
   for (int i = 0; i < count; i++) {
     const Choice *choice = choiceAt(i);
     int top = rowTopFor(i, count);
     uint16_t fill = choice->asksTeacher ? COL_ASK : COL_TRY;
     lcd.fillRoundRect(ROW_X, top, ROW_W, height, 12, fill);
-    lcd.setTextDatum(textdatum_t::middle_left);
-    lcd.setFont(&fonts::Font2);
     lcd.setTextColor(COL_FG, fill);
-    lcd.drawString(choice->label, ROW_X + 16, top + height / 2);
-    lcd.setTextDatum(textdatum_t::middle_right);
-    lcd.drawString(choice->asksTeacher ? "Ask teacher" : "Try this", ROW_X + ROW_W - 16, top + height / 2);
+    if (gradeLevel == GRADE_K) {
+      lcd.setTextDatum(textdatum_t::middle_center);
+      lcd.setFont(&fonts::Font4);
+      lcd.drawString(choiceLabel(choice), ROW_X + ROW_W / 2, top + height / 2);
+    } else if (gradeLevel == GRADE_5) {
+      lcd.setTextDatum(textdatum_t::top_left);
+      lcd.setFont(&fonts::Font2);
+      lcd.drawString(choice->label, ROW_X + 16, top + 8);
+      char line[70];
+      firstSentence(choice->help, line, sizeof(line));
+      lcd.drawString(line, ROW_X + 16, top + 30);
+      lcd.setTextDatum(textdatum_t::top_right);
+      lcd.drawString(choice->asksTeacher ? "Ask teacher" : "Try this", ROW_X + ROW_W - 16, top + 8);
+    } else if (gradeLevel == GRADE_12) {
+      lcd.setTextDatum(textdatum_t::middle_left);
+      lcd.setFont(&fonts::Font4);
+      lcd.drawString(choice->label, ROW_X + 16, top + height / 2);
+    } else {
+      lcd.setTextDatum(textdatum_t::middle_left);
+      lcd.setFont(&fonts::Font2);
+      lcd.drawString(choice->label, ROW_X + 16, top + height / 2);
+      lcd.setTextDatum(textdatum_t::middle_right);
+      lcd.drawString(choice->asksTeacher ? "Ask teacher" : "Try this", ROW_X + ROW_W - 16, top + height / 2);
+    }
   }
   paintStatus();
   paintGearButton();
@@ -755,10 +962,12 @@ static void paintSubmenu() {
 // Draw text that wraps onto new lines. A \n in the string forces a
 // break even when the line is not full. Words are copied one at a time
 // into buf because drawString needs a normal C string, not a slice.
-static void drawWrapped(const char *text, int x, int y, int maxWidth) {
+static void drawWrapped(const char *text, int x, int y, int maxWidth, bool small) {
   lcd.setTextDatum(textdatum_t::top_left);
   lcd.setTextColor(COL_FG, COL_BG);
-  lcd.setFont(&fonts::Font4);
+  // Small type fits more words on the page. Grade 5 uses it for that.
+  // K uses it for the steps so the one big word stays the focus.
+  lcd.setFont(small ? &fonts::Font2 : &fonts::Font4);
   int cursorX = x;
   int cursorY = y;
   int lineHeight = lcd.fontHeight() + 8;
@@ -807,16 +1016,22 @@ static void drawWrapped(const char *text, int x, int y, int maxWidth) {
 static void paintSelected() {
   const Choice *choice = choiceAt(submenuPos);
   uint16_t band = choice->asksTeacher ? COL_ASK : COL_TRY;
+  const char *banner = choice->asksTeacher ? "Ask my teacher" : "Try this";
+  if (gradeLevel == GRADE_K) {
+    banner = choice->asksTeacher ? "Ask" : "Try";
+  }
   lcd.fillScreen(COL_BG);
   paintBackButton();
   lcd.fillRoundRect(24, 64, 752, 64, 12, band);
   lcd.setTextDatum(textdatum_t::middle_left);
-  lcd.setFont(&fonts::Font4);
+  lcd.setFont(gradeLevel == GRADE_5 ? &fonts::Font2 : &fonts::Font4);
   lcd.setTextColor(COL_FG, band);
-  lcd.drawString(choice->asksTeacher ? "Ask my teacher" : "Try this", 44, 96);
+  lcd.drawString(banner, 44, 96);
   lcd.setTextColor(COL_FG, COL_BG);
-  drawWrapped(choice->label, 24, 150, 752);
-  drawWrapped(choice->help, 24, 210, 752);
+  bool smallWords = (gradeLevel == GRADE_5);
+  drawWrapped(choiceLabel(choice), 24, 150, 752, smallWords);
+  // K steps stay in the smaller font under the one big word.
+  drawWrapped(choice->help, 24, 210, 752, smallWords || gradeLevel == GRADE_K);
   paintStatus();
   paintGearButton();
   lcd.setTextDatum(textdatum_t::top_left);
@@ -826,10 +1041,9 @@ static int gradeRowTop(int index) {
   return GRADE_TOP + index * (GRADE_H + GRADE_GAP);
 }
 
-// Settings page. Brightness and grade save as soon as they change.
+// Settings page. Brightness and age group save as soon as they change.
 // The name is only saved from the keyboard screen.
-// Green on a grade row means that row is selected and it is the live layout.
-// Orange means it is selected but still a placeholder.
+// The green row is the look students see on the other screens.
 static void paintSettings() {
   lcd.fillScreen(COL_BG);
   lcd.setTextDatum(textdatum_t::middle_left);
@@ -875,32 +1089,24 @@ static void paintSettings() {
   lcd.setTextDatum(textdatum_t::top_left);
   lcd.setFont(&fonts::Font2);
   lcd.setTextColor(COL_FG, COL_BG);
-  lcd.drawString("Grade level", 24, GRADE_NOTE_Y);
+  lcd.drawString("Age group", 24, GRADE_NOTE_Y);
   lcd.setTextDatum(textdatum_t::top_right);
-  if (gradeOptions[gradeLevel].live) {
-    lcd.drawString("Students see this screen now.", 776, GRADE_NOTE_Y);
-  } else {
-    lcd.drawString("Saved. Student screen stays Grades 2-4.", 776, GRADE_NOTE_Y);
-  }
+  lcd.drawString("Students see this look now.", 776, GRADE_NOTE_Y);
 
   for (int i = 0; i < GRADE_COUNT; i++) {
     int top = gradeRowTop(i);
     bool selected = (i == gradeLevel);
-    uint16_t fill = COL_ROW;
-    if (selected && gradeOptions[i].live) {
-      fill = COL_TRY;
-    } else if (selected) {
-      fill = COL_ASK;
-    }
+    uint16_t fill = selected ? COL_TRY : COL_ROW;
     lcd.fillRoundRect(ROW_X, top, ROW_W, GRADE_H, 12, fill);
     lcd.setTextDatum(textdatum_t::top_left);
     lcd.setFont(&fonts::Font2);
     lcd.setTextColor(COL_FG, fill);
     lcd.drawString(gradeOptions[i].label, ROW_X + 16, top + 6);
     lcd.drawString(gradeOptions[i].about, ROW_X + 16, top + 30);
-    lcd.setTextDatum(textdatum_t::middle_right);
-    const char *tag = gradeOptions[i].live ? "In use" : "Placeholder";
-    lcd.drawString(tag, ROW_X + ROW_W - 16, top + GRADE_H / 2);
+    if (selected) {
+      lcd.setTextDatum(textdatum_t::middle_right);
+      lcd.drawString("In use", ROW_X + ROW_W - 16, top + GRADE_H / 2);
+    }
   }
   lcd.setTextDatum(textdatum_t::top_left);
 }
@@ -1102,10 +1308,33 @@ static void openSubmenu(int index) {
   paintSubmenu();
 }
 
+// Tell the teacher which response was just opened. Green and orange
+// both count. The event number lets a later Yes or No find this tap.
+static void notifyTeacher() {
+  const Choice *choice = choiceAt(submenuPos);
+  ClearNote note = {};
+  note.version = CLEAR_LINK_VERSION;
+  note.kind = CLEAR_KIND_NOTICE;
+  note.asksTeacher = choice->asksTeacher ? 1 : 0;
+  note.answer = CLEAR_ANSWER_NONE;
+  note.eventId = nextEventId++;
+  waitingId = note.eventId;
+  teacherReply = CLEAR_ANSWER_NONE;
+  noticeSent = false;
+  // Full words go in the log, even when K is showing a shorter word.
+  copyField(note.student, sizeof(note.student), studentName);
+  copyField(note.feeling, sizeof(note.feeling), menu[selectedMenu]);
+  copyField(note.choice, sizeof(note.choice), choice->label);
+  if (linkReady) {
+    noticeSent = esp_now_send(clearBroadcast, (uint8_t *)&note, sizeof(note)) == ESP_OK;
+  }
+}
+
 // Open the detail page for response number index in the current list.
 static void showSelectedItem(int index) {
   submenuPos = index;
   currentScreen = SCREEN_SELECTED;
+  notifyTeacher();
   paintSelected();
 }
 
@@ -1211,13 +1440,17 @@ static int brightnessFromX(int x) {
   return ((pct + 5) / 10) * 10;
 }
 
-// Save which grade row was tapped and redraw. The student screens
-// do not switch yet. Only the settings page shows the new choice.
+// Save the age group and redraw settings. The feelings screens use
+// gradeLevel the next time they are drawn. If the open response is
+// one this age group hides, go back to the first visible button.
 static void setGrade(int index) {
   if (index < 0 || index >= GRADE_COUNT || index == gradeLevel) {
     return;
   }
   gradeLevel = index;
+  // The buttons on screen change with the age group, so do not keep
+  // pointing at a response from the previous look.
+  submenuPos = 0;
   saveSettings();
   paintSettings();
 }
@@ -1237,33 +1470,37 @@ void setup() {
   lcd.setRotation(0);      // 0 matches the touch map. Another value would move taps off the buttons.
   applyBrightness();
 
-  RemoteXY_Init();       // start the Wi-Fi hotspot and the phone listener
+  startTeacherLink();     // radio to the teacher device, not a phone hotspot
   screenMs = millis();    // start the two-second greeting timer
   paintHello();
 }
 
-// Repeats forever. Each pass gives the phone a turn, maybe advances
-// the greeting, refreshes the footer if the phone changed, then
-// handles at most one new finger tap.
+// Repeats forever. Each pass checks for a teacher answer, maybe
+// advances the greeting, then handles at most one new finger tap.
 void loop() {
-  // Must run every pass. If it is skipped, the phone app disconnects.
-  RemoteXYEngine.handler();
+  // A Yes or No can arrive while a finger is down. Apply it here, then
+  // refresh the footer. Settings and the keyboard have no footer.
+  if (replyReady) {
+    ClearNote note;
+    noInterrupts();
+    note = pendingReply;
+    replyReady = false;
+    interrupts();
+    if (note.version == CLEAR_LINK_VERSION &&
+        note.kind == CLEAR_KIND_REPLY &&
+        note.eventId == waitingId &&
+        strcmp(note.student, studentName) == 0) {
+      teacherReply = note.answer;
+      if (currentScreen != SCREEN_SETTINGS && currentScreen != SCREEN_NAME) {
+        paintStatus();
+      }
+    }
+  }
 
   // Greeting timer. Opening settings leaves SCREEN_HELLO, so the timer
   // does not fire while the teacher is still in settings.
   if (currentScreen == SCREEN_HELLO && (millis() - screenMs) >= HELLO_MS) {
     showMainMenu();
-  }
-
-  // Settings and the keyboard do not use the phone footer. Drawing it
-  // there would cover the bottom of those pages.
-  if (currentScreen != SCREEN_HELLO &&
-      currentScreen != SCREEN_SETTINGS &&
-      currentScreen != SCREEN_NAME &&
-      (RemoteXY.connect_flag != shownConnect ||
-       RemoteXY.selectorSwitch_01 != shownSwitch ||
-       RemoteXY.optionSelector_01 != shownOption)) {
-    paintStatus();
   }
 
   // getTouch is true the whole time a finger is down, and it fills tx, ty.
