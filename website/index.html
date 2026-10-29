@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CLEAR weeks</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4efe4;
+      --ink: #2a2418;
+      --card: #fffdf8;
+      --line: #e2d8c6;
+      --green: #2f7d4a;
+      --orange: #c56a22;
+      --muted: #6d6254;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Georgia, "Iowan Old Style", serif;
+      background: var(--bg);
+      color: var(--ink);
+    }
+    main {
+      max-width: 880px;
+      margin: 0 auto;
+      padding: 32px 20px 64px;
+    }
+    h1 { font-size: 2rem; margin: 0 0 8px; }
+    h2 { font-size: 1.25rem; margin: 0 0 12px; }
+    p { line-height: 1.45; }
+    .lede { color: var(--muted); margin-top: 0; }
+    section {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 18px 18px 8px;
+      margin: 16px 0;
+    }
+    label { display: block; font-size: 0.95rem; margin: 10px 0 4px; }
+    input[type="text"], input[type="file"] { font: inherit; }
+    input[type="text"] {
+      width: 100%;
+      max-width: 360px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: white;
+    }
+    button {
+      font: inherit;
+      margin: 12px 8px 12px 0;
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--ink);
+      background: var(--ink);
+      color: white;
+      cursor: pointer;
+    }
+    button.quiet {
+      background: white;
+      color: var(--ink);
+    }
+    .message { min-height: 1.4em; color: var(--green); }
+    .message.bad { color: #9a3412; }
+    ul { list-style: none; padding: 0; }
+    li.week {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      border-top: 1px solid var(--line);
+      padding: 10px 0;
+    }
+    .bars { margin: 0 0 16px; }
+    .row { display: grid; grid-template-columns: 140px 1fr 36px; gap: 8px; align-items: center; margin: 6px 0; }
+    .track { background: #efe6d6; border-radius: 6px; height: 14px; }
+    .fill { height: 14px; border-radius: 6px; background: var(--green); }
+    .fill.ask { background: var(--orange); }
+    table { width: 100%; border-collapse: collapse; font-size: 0.95rem; margin-bottom: 12px; }
+    th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-weight: normal; }
+    .empty { color: var(--muted); }
+    .drawing-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 14px;
+      margin: 14px 0;
+    }
+    .drawing-card {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+      background: white;
+    }
+    .drawing-card img {
+      display: block;
+      width: 100%;
+      aspect-ratio: 5 / 3;
+      object-fit: contain;
+      background: #f3f0e9;
+      border: 1px solid var(--line);
+    }
+    .drawing-card p { margin: 6px 0 0; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>CLEAR weeks</h1>
+    <p class="lede">Copy <code>clear-log.csv</code> and any SVGs in <code>student-drawings</code> from the teacher microSD card with a card reader, then import them together. Each week stays in this browser. Trends use every week that is still saved. Removing a week here does not erase the card.</p>
+
+    <section>
+      <h2>Import a week</h2>
+      <label for="file">Week file</label>
+      <input id="file" type="file" accept=".csv,text/csv">
+      <label for="name">Week name</label>
+      <input id="name" type="text" maxlength="40" placeholder="Week of Oct 24">
+      <label for="drawings">Student drawing files (optional)</label>
+      <input id="drawings" type="file" accept=".svg,image/svg+xml" multiple>
+      <p class="empty">Select the SVG files from the teacher card's <code>student-drawings</code> folder to keep them with this week.</p>
+      <div>
+        <button id="save" type="button">Save this week</button>
+      </div>
+      <p id="message" class="message"></p>
+    </section>
+
+    <section>
+      <h2>Saved weeks</h2>
+      <ul id="weeks"></ul>
+    </section>
+
+    <section>
+      <button id="drawingsToggle" class="quiet" type="button"
+              aria-expanded="false" aria-controls="drawingsPanel">Student drawings</button>
+      <div id="drawingsPanel" hidden>
+        <p>Browse each drawing received from the student panels. Drawings are stored with the imported week in this browser.</p>
+        <label for="drawingStudent">Student</label>
+        <select id="drawingStudent"></select>
+        <div id="drawingGallery"></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Trends</h2>
+      <div id="trends"></div>
+    </section>
+
+    <section>
+      <h2>One week</h2>
+      <label for="which">Look at</label>
+      <select id="which"></select>
+      <div id="detail"></div>
+    </section>
+  </main>
+  <script>
+    var STORAGE_KEY = "clear-weeks";
+    var pendingRows = null;
+    var pendingDrawings = null;
+    var drawingObjectUrls = [];
+
+    function loadWeeks() {
+      try {
+        var saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+        return Array.isArray(saved) ? saved : [];
+      } catch (err) {
+        return [];
+      }
+    }
+
+    function storeWeeks(weeks) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(weeks));
+    }
+
+    function setMessage(text, bad) {
+      var el = document.getElementById("message");
+      el.textContent = text;
+      el.className = bad ? "message bad" : "message";
+    }
+
+    function parseCsv(text) {
+      if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+      var rows = [];
+      var row = [];
+      var field = "";
+      var quoted = false;
+      for (var i = 0; i < text.length; i++) {
+        var c = text.charAt(i);
+        if (quoted) {
+          if (c === '"') {
+            if (text.charAt(i + 1) === '"') {
+              field += '"';
+              i++;
+            } else {
+              quoted = false;
+            }
+          } else {
+            field += c;
+          }
+        } else if (c === '"') {
+          quoted = true;
+        } else if (c === ",") {
+          row.push(field);
+          field = "";
+        } else if (c === "\n") {
+          row.push(field);
+          field = "";
+          if (row.join("").trim() !== "") rows.push(row);
+          row = [];
+        } else if (c !== "\r") {
+          field += c;
+        }
+      }
+      if (field.length || row.length) {
+        row.push(field);
+        if (row.join("").trim() !== "") rows.push(row);
+      }
+      if (!rows.length) return [];
+      var header = rows[0].map(function (cell) { return cell.trim(); });
+      return rows.slice(1).map(function (cols) {
+        var item = {};
+        header.forEach(function (name, index) {
+          item[name] = (cols[index] || "").trim();
+        });
+        return item;
+      });
+    }
+
+    function sanitizeDrawingSvg(text, filename) {
+      if (text.length > 300000) throw new Error(filename + " is too large.");
+      var source = new DOMParser().parseFromString(text, "image/svg+xml");
+      var root = source.documentElement;
+      if (!root || root.localName !== "svg" ||
+          source.getElementsByTagName("parsererror").length) {
+        throw new Error(filename + " is not a valid SVG drawing.");
+      }
+      var student = root.getAttribute("data-student") || "";
+      var board = root.getAttribute("data-board") || "";
+      var drawingId = root.getAttribute("data-drawing-id") || "";
+      if (!student || student.length > 16 ||
+          ["graph", "whiteboard", "chalkboard"].indexOf(board) < 0 ||
+          !/^\d+$/.test(drawingId)) {
+        throw new Error(filename + " is missing drawing details.");
+      }
+
+      var svgNamespace = "http://www.w3.org/2000/svg";
+      var safeRoot = document.createElementNS(svgNamespace, "svg");
+      safeRoot.setAttribute("xmlns", svgNamespace);
+      var rootAttrs = ["width", "height", "viewBox"];
+      var rootValues = { width: "800", height: "480", viewBox: "0 0 800 480" };
+      rootAttrs.forEach(function (name) {
+        var value = root.getAttribute(name);
+        if (value === rootValues[name]) safeRoot.setAttribute(name, value);
+      });
+      var allowed = {
+        rect: ["x", "y", "width", "height", "fill", "rx", "ry"],
+        line: ["x1", "y1", "x2", "y2", "stroke", "stroke-width", "stroke-linecap"],
+        g: ["fill", "stroke", "stroke-width", "stroke-linecap"]
+      };
+      var numberPattern = /^-?\d+(?:\.\d+)?$/;
+      var colorPattern = /^(?:#[0-9a-f]{6}|none)$/i;
+      var elementCount = 0;
+
+      function copySafeNode(parent, node) {
+        if (node.nodeType !== 1) return;
+        var tag = node.localName;
+        if (!Object.prototype.hasOwnProperty.call(allowed, tag)) {
+          throw new Error(filename + " contains unsupported SVG content.");
+        }
+        elementCount++;
+        if (elementCount > 5000) throw new Error(filename + " has too many drawing elements.");
+        var clean = document.createElementNS(svgNamespace, tag);
+        Array.prototype.forEach.call(node.attributes, function (attr) {
+          if (allowed[tag].indexOf(attr.name) < 0) return;
+          var value = attr.value;
+          if (["fill", "stroke"].indexOf(attr.name) >= 0) {
+            if (!colorPattern.test(value)) throw new Error(filename + " has an invalid color.");
+          } else if (attr.name === "stroke-linecap") {
+            if (value !== "round" && value !== "butt" && value !== "square") {
+              throw new Error(filename + " has an invalid line style.");
+            }
+          } else if (!numberPattern.test(value)) {
+            throw new Error(filename + " has invalid drawing coordinates.");
+          }
+          clean.setAttribute(attr.name, value);
+        });
+        parent.appendChild(clean);
+        Array.prototype.forEach.call(node.childNodes, function (child) {
+          if (child.nodeType === 1) copySafeNode(clean, child);
+        });
+      }
+
+      Array.prototype.forEach.call(root.childNodes, function (child) {
+        if (child.nodeType === 1) copySafeNode(safeRoot, child);
+      });
+      return {
+        name: filename,
+        student: student,
+        board: board,
+        drawingId: drawingId,
+        svg: new XMLSerializer().serializeToString(safeRoot)
+      };
+    }
+
+    // A selection and its later Yes or No share an id. Keep one event,
+    // the earliest second, and the answer if the teacher gave one.
+    function eventsIn(rows) {
+      var byId = {};
+      var order = [];
+      rows.forEach(function (row, index) {
+        var id = row.id || ("row-" + index);
+        var prev = byId[id];
+        if (!prev) {
+          byId[id] = {
+            id: id,
+            seconds_on: row.seconds_on || "",
+            student: row.student || "",
+            feeling: row.feeling || "",
+            choice: row.choice || "",
+            kind: row.kind || "",
+            teacher_response: row.teacher_response || ""
+          };
+          order.push(id);
+          return;
+        }
+        if (row.teacher_response) prev.teacher_response = row.teacher_response;
+        var a = Number(prev.seconds_on);
+        var b = Number(row.seconds_on);
+        if (!isNaN(a) && !isNaN(b) && b < a) prev.seconds_on = String(b);
+      });
+      return order.map(function (id) { return byId[id]; });
+    }
+
+    function countBy(events, pick) {
+      var counts = {};
+      events.forEach(function (event) {
+        var key = pick(event) || "Unknown";
+        counts[key] = (counts[key] || 0) + 1;
+      });
+      return Object.keys(counts).map(function (key) {
+        return { label: key, count: counts[key] };
+      }).sort(function (a, b) { return b.count - a.count; });
+    }
+
+    function barList(title, items, ask) {
+      var max = 1;
+      items.forEach(function (item) { if (item.count > max) max = item.count; });
+      var html = "<h3>" + title + "</h3><div class='bars'>";
+      if (!items.length) return html + "<p class='empty'>Nothing saved yet.</p></div>";
+      items.forEach(function (item) {
+        var width = Math.round(item.count * 100 / max);
+        html += "<div class='row'><span>" + escapeHtml(item.label) + "</span>";
+        html += "<div class='track'><div class='fill" + (ask ? " ask" : "") + "' style='width:" + width + "%'></div></div>";
+        html += "<span>" + item.count + "</span></div>";
+      });
+      return html + "</div>";
+    }
+
+    function escapeHtml(text) {
+      return String(text)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    }
+
+    function allEvents(weeks) {
+      var events = [];
+      weeks.forEach(function (week) {
+        eventsIn(week.rows).forEach(function (event) {
+          event.week = week.name;
+          events.push(event);
+        });
+      });
+      return events;
+    }
+
+    function render() {
+      var weeks = loadWeeks();
+      var weekList = document.getElementById("weeks");
+      weekList.innerHTML = "";
+      if (!weeks.length) {
+        weekList.innerHTML = "<li class='empty'>No weeks saved in this browser yet.</li>";
+      }
+      weeks.forEach(function (week) {
+        var count = eventsIn(week.rows).length;
+        var item = document.createElement("li");
+        item.className = "week";
+        var label = document.createElement("span");
+        var drawingCount = (week.drawings || []).length;
+        label.textContent = week.name + " — " + count +
+          (count === 1 ? " selection" : " selections") + " — " +
+          drawingCount + (drawingCount === 1 ? " drawing" : " drawings");
+        var remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "quiet";
+        remove.textContent = "Remove";
+        remove.addEventListener("click", function () {
+          if (!window.confirm("Remove " + week.name + " from this browser?")) return;
+          storeWeeks(loadWeeks().filter(function (saved) { return saved.name !== week.name; }));
+          render();
+        });
+        item.appendChild(label);
+        item.appendChild(remove);
+        weekList.appendChild(item);
+      });
+
+      var events = allEvents(weeks);
+      var feelings = countBy(events, function (event) { return event.feeling; });
+      var students = countBy(events, function (event) { return event.student; });
+      var kinds = countBy(events, function (event) {
+        if (event.kind === "ask") return "Ask teacher";
+        if (event.kind === "try") return "Try this";
+        return event.kind;
+      });
+      var answers = countBy(events.filter(function (event) { return event.kind === "ask"; }), function (event) {
+        if (event.teacher_response === "yes") return "Yes";
+        if (event.teacher_response === "no") return "No";
+        return "Still waiting";
+      });
+      var byWeek = weeks.map(function (week) {
+        return { label: week.name, count: eventsIn(week.rows).length };
+      });
+      var trends = document.getElementById("trends");
+      trends.innerHTML = barList("Selections each week", byWeek, false)
+        + barList("Feelings", feelings, false)
+        + barList("Students", students, false)
+        + barList("Try this or ask", kinds, false)
+        + barList("Teacher answers on asks", answers, true);
+
+      var which = document.getElementById("which");
+      var previous = which.value;
+      which.innerHTML = "";
+      weeks.forEach(function (week) {
+        var option = document.createElement("option");
+        option.value = week.name;
+        option.textContent = week.name;
+        which.appendChild(option);
+      });
+      if (previous && weeks.some(function (week) { return week.name === previous; })) {
+        which.value = previous;
+      } else if (weeks.length) {
+        which.value = weeks[weeks.length - 1].name;
+      }
+      renderDetail();
+      renderDrawingCategory(weeks);
+    }
+
+    function renderDetail() {
+      var detail = document.getElementById("detail");
+      var weeks = loadWeeks();
+      var name = document.getElementById("which").value;
+      var week = null;
+      weeks.forEach(function (item) { if (item.name === name) week = item; });
+      if (!week) {
+        detail.innerHTML = "<p class='empty'>Import a week to see its rows. Seconds start over each time the teacher device powers on. The week name is what keeps the files apart.</p>";
+        return;
+      }
+      var events = eventsIn(week.rows);
+      var html = "<table><thead><tr><th>Seconds</th><th>Student</th><th>Feeling</th><th>Choice</th><th>Kind</th><th>Teacher</th></tr></thead><tbody>";
+      events.forEach(function (event) {
+        html += "<tr><td>" + escapeHtml(event.seconds_on) + "</td><td>" + escapeHtml(event.student)
+          + "</td><td>" + escapeHtml(event.feeling) + "</td><td>" + escapeHtml(event.choice)
+          + "</td><td>" + escapeHtml(event.kind) + "</td><td>" + escapeHtml(event.teacher_response) + "</td></tr>";
+      });
+      html += "</tbody></table>";
+      detail.innerHTML = html;
+    }
+
+    function renderDrawingCategory(weeks) {
+      drawingObjectUrls.forEach(function (url) { URL.revokeObjectURL(url); });
+      drawingObjectUrls = [];
+      var drawings = [];
+      weeks.forEach(function (week) {
+        (week.drawings || []).forEach(function (drawing) {
+          drawings.push({
+            week: week.name,
+            student: drawing.student,
+            board: drawing.board,
+            svg: drawing.svg
+          });
+        });
+      });
+
+      var studentSelect = document.getElementById("drawingStudent");
+      var previous = studentSelect.value;
+      var students = [];
+      drawings.forEach(function (drawing) {
+        if (students.indexOf(drawing.student) < 0) students.push(drawing.student);
+      });
+      students.sort();
+      studentSelect.innerHTML = "";
+      students.forEach(function (student) {
+        var option = document.createElement("option");
+        option.value = student;
+        option.textContent = student;
+        studentSelect.appendChild(option);
+      });
+      if (students.indexOf(previous) >= 0) studentSelect.value = previous;
+
+      var gallery = document.getElementById("drawingGallery");
+      gallery.innerHTML = "";
+      if (!drawings.length) {
+        gallery.innerHTML = "<p class='empty'>No student drawings have been imported yet.</p>";
+        return;
+      }
+      var selectedStudent = studentSelect.value;
+      var visible = drawings.filter(function (drawing) {
+        return drawing.student === selectedStudent;
+      });
+      if (!visible.length) {
+        gallery.innerHTML = "<p class='empty'>No drawings for this student.</p>";
+        return;
+      }
+      var grid = document.createElement("div");
+      grid.className = "drawing-grid";
+      visible.forEach(function (drawing) {
+        var card = document.createElement("article");
+        card.className = "drawing-card";
+        var image = document.createElement("img");
+        image.alt = drawing.student + " " + drawing.board + " drawing";
+        var url = URL.createObjectURL(new Blob([drawing.svg], {
+          type: "image/svg+xml"
+        }));
+        drawingObjectUrls.push(url);
+        image.src = url;
+        var caption = document.createElement("p");
+        caption.textContent = drawing.student + " — " + drawing.board +
+          " — " + drawing.week;
+        card.appendChild(image);
+        card.appendChild(caption);
+        grid.appendChild(card);
+      });
+      gallery.appendChild(grid);
+    }
+
+    document.getElementById("file").addEventListener("change", function (event) {
+      var file = event.target.files && event.target.files[0];
+      pendingRows = null;
+      if (!file) return;
+      var guessed = file.name.replace(/\.csv$/i, "").replace(/[_-]+/g, " ");
+      if (!document.getElementById("name").value) {
+        document.getElementById("name").value = guessed;
+      }
+      var reader = new FileReader();
+      reader.onload = function () {
+        var text = String(reader.result || "");
+        var first = text.replace(/^\uFEFF/, "").split(/\r?\n/)[0].toLowerCase();
+        var rows = parseCsv(text);
+        if (first.indexOf("student") < 0 || first.indexOf("feeling") < 0) {
+          pendingRows = null;
+          setMessage("This file does not look like a CLEAR week log.", true);
+          return;
+        }
+        pendingRows = rows;
+        var count = eventsIn(rows).length;
+        var message = count + (count === 1 ? " selection" : " selections") + " read.";
+        if (pendingDrawings && pendingDrawings.length) {
+          message += " " + pendingDrawings.length + " drawings also read.";
+        }
+        setMessage(message + " Save the week to keep them.", false);
+      };
+      reader.readAsText(file);
+    });
+
+    document.getElementById("drawings").addEventListener("change", function (event) {
+      var files = Array.prototype.slice.call(event.target.files || []);
+      pendingDrawings = null;
+      if (!files.length) return;
+      var reads = files.map(function (file) {
+        return new Promise(function (resolve, reject) {
+          var reader = new FileReader();
+          reader.onerror = function () { reject(new Error("Could not read " + file.name + ".")); };
+          reader.onload = function () {
+            try {
+              resolve(sanitizeDrawingSvg(String(reader.result || ""), file.name));
+            } catch (err) {
+              reject(err);
+            }
+          };
+          reader.readAsText(file);
+        });
+      });
+      Promise.all(reads).then(function (drawings) {
+        pendingDrawings = drawings;
+        setMessage(drawings.length + (drawings.length === 1 ? " drawing" : " drawings") +
+          " read. Choose the week CSV, then save them together.", false);
+      }).catch(function (err) {
+        pendingDrawings = null;
+        setMessage(err.message || "Could not read the student drawings.", true);
+      });
+    });
+
+    document.getElementById("save").addEventListener("click", function () {
+      var name = document.getElementById("name").value.trim();
+      if (!pendingRows) {
+        setMessage("Choose a CSV file first.", true);
+        return;
+      }
+      if (!name) {
+        setMessage("Give this week a name.", true);
+        return;
+      }
+      var weeks = loadWeeks();
+      var replaced = false;
+      weeks.forEach(function (week) {
+        if (week.name === name) {
+          if (!window.confirm(name + " is already saved. Replace its rows?")) return;
+          week.rows = pendingRows;
+          if (pendingDrawings !== null) week.drawings = pendingDrawings;
+          week.savedAt = new Date().toISOString();
+          replaced = true;
+        }
+      });
+      if (!replaced && weeks.some(function (week) { return week.name === name; })) return;
+      if (!replaced) {
+        weeks.push({
+          name: name,
+          savedAt: new Date().toISOString(),
+          rows: pendingRows,
+          drawings: pendingDrawings || []
+        });
+      }
+      try {
+        storeWeeks(weeks);
+      } catch (err) {
+        setMessage("This browser could not store the week.", true);
+        return;
+      }
+      pendingDrawings = null;
+      document.getElementById("drawings").value = "";
+      setMessage(name + " is saved in this browser.", false);
+      render();
+    });
+
+    document.getElementById("which").addEventListener("change", renderDetail);
+    document.getElementById("drawingStudent").addEventListener("change", function () {
+      renderDrawingCategory(loadWeeks());
+    });
+    document.getElementById("drawingsToggle").addEventListener("click", function () {
+      var panel = document.getElementById("drawingsPanel");
+      var expanded = this.getAttribute("aria-expanded") === "true";
+      panel.hidden = expanded;
+      this.setAttribute("aria-expanded", expanded ? "false" : "true");
+      renderDrawingCategory(loadWeeks());
+    });
+    render();
+  </script>
+</body>
+</html>
