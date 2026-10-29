@@ -12,20 +12,9 @@
   USB-C on the CrowPanel is the program port. If upload sits on
   "Connecting...", hold BOOT, tap RST, and release BOOT.
 
-  A student selection is sent by Bluetooth to the teacher device. There
-  is no phone app. The teacher answers Yes or No, and that answer shows
-  along the bottom of this panel. The time sent with each selection
-  comes from this panel's clock.
+  Student requests and teacher Yes/No replies use BLE.
 
-  Green buttons are something the student can try.
-  Orange buttons ask the teacher. Both are sent, so the teacher knows
-  a student needs help.
-
-  The gear in the top right opens settings. A teacher can change the
-  name on the startup screen, the brightness, and the age-group look.
-  K uses pictures and one-word buttons. Grades 1-2 use big
-  letters and only three responses. Grades 3-4 is the full short-sentence
-  screen. Grade 5 uses smaller type and shows more of the instructions.
+  Settings retain the saved name, brightness, and age-group text sizing.
 
   How this sketch runs:
   setup() runs once at power-on. loop() then repeats forever.
@@ -39,6 +28,7 @@
 #include <BLEDevice.h>
 #include <BLEUtils.h>
 #include <BLEScan.h>
+#include <BLEClient.h>
 #include <BLEAdvertisedDevice.h>
 #include <string.h>
 #include <time.h>
@@ -48,7 +38,7 @@
 #include <LovyanGFX.hpp>   // draws text, rectangles, and reads the touch panel
 #include <lgfx/v1/platforms/esp32s3/Panel_RGB.hpp>
 #include <lgfx/v1/platforms/esp32s3/Bus_RGB.hpp>
-#include "CLEAR_Link.h"    // radio message shared with the teacher sketch
+#include "CLEAR_Link.h"    // BLE message shared with the teacher sketch
 
 // LGFX is the display driver. The constructor only stores the wiring.
 // Nothing is drawn until lcd.init() in setup().
@@ -158,7 +148,7 @@ public:
 static const uint8_t PIN_BL = 2;
 // Small I2C chip on the panel. One of its pins helps enable the backlight.
 static const uint8_t PCA9557_ADDR = 0x19;
-// The greeting stays up this long, then the feelings list appears on its own.
+// Timeout retained for the legacy greeting screen; the new name screen waits for Save.
 static const unsigned long HELLO_MS = 2000;
 // Ignore a second tap that arrives sooner than this. A finger often
 // sends more than one touch for a single press.
@@ -172,6 +162,16 @@ static const int SCREEN_SUBMENU = 2;    // responses for the feeling they picked
 static const int SCREEN_SELECTED = 3;   // the steps for one response
 static const int SCREEN_SETTINGS = 4;   // name, brightness, grade
 static const int SCREEN_NAME = 5;       // keyboard for the student name
+static const int APP_HELLO = 20;
+static const int APP_MENU = 21;
+static const int APP_QUESTION = 22;
+static const int APP_HELP = 23;
+static const int APP_MATERIAL = 24;
+static const int APP_EMOTIONS = 25;
+static const int APP_EMOTION_OPTIONS = 26;
+static const int APP_DETAIL = 27;
+static const int APP_EDITOR = 28;
+static const int APP_FEELING_NOTES = 29;
 
 // Positions are pixels. x grows to the right, y grows downward.
 // (0, 0) is the top-left corner. The screen is 800 by 480.
@@ -249,13 +249,14 @@ static const int KEY_AREA_W = 768;
 static const int KEY_TOP = 148;
 static const int KEY_H = 62;
 static const int KEY_GAP = 8;
-static const int KEY_MAX = 32;
+static const int KEY_MAX = 40;
 
 // What a keyboard key does when it is tapped. Letter keys use KEY_CHAR.
 static const int KEY_CHAR = 1;
 static const int KEY_BACKSPACE = 2;
 static const int KEY_CLEAR = 3;
 static const int KEY_SPACE = 4;
+static const int APP_TEXT_MAX = 80;
 
 // =============================================================================
 // =============================================================================
@@ -394,12 +395,105 @@ struct KeyHit {
   int h;
 };
 
+enum AppAction {
+  APP_ACTION_OPEN,
+  APP_ACTION_DETAIL,
+  APP_ACTION_SEND,
+  APP_ACTION_EDIT_TEMPLATE,
+  APP_ACTION_EDIT_CUSTOM,
+  APP_ACTION_NOTES
+};
+
+struct AppOption {
+  const char *label;
+  const char *help;
+  const char *message;
+  const char *prefix;
+  AppAction action;
+  int target;
+};
+
+static const AppOption mainOptions[] = {
+  {"I have a question", "Choose a question or suggestion.", nullptr, nullptr, APP_ACTION_OPEN, APP_QUESTION},
+  {"I need a break", "Send a break request to the teacher.", "I need a break", nullptr, APP_ACTION_SEND, 0},
+  {"I need help", "Choose material help, personal help, or a private conversation.", nullptr, nullptr, APP_ACTION_OPEN, APP_HELP}
+};
+
+static const AppOption questionOptions[] = {
+  {"Can you repeat that part about...?", "Type the topic, then send the message.", nullptr, "Can you repeat that part about ", APP_ACTION_EDIT_TEMPLATE, 0},
+  {"Can you repeat the last question?", "Send this question to the teacher.", "Can you repeat the last question?", nullptr, APP_ACTION_SEND, 0},
+  {"Can you repeat the question about...?", "Type the topic, then send the message.", nullptr, "Can you repeat the question about ", APP_ACTION_EDIT_TEMPLATE, 0},
+  {"Try asking another student a question (if the teacher isn't speaking)", "This is a suggestion for the student; it is not sent.", nullptr, nullptr, APP_ACTION_DETAIL, 0},
+  {"Try raising your hand", "This is a suggestion for the student; it is not sent.", nullptr, nullptr, APP_ACTION_DETAIL, 0},
+  {"Custom Message", "Write a message for the teacher.", nullptr, nullptr, APP_ACTION_EDIT_CUSTOM, 0}
+};
+
+static const AppOption helpOptions[] = {
+  {"I need help with the material", "Open material-help options.", nullptr, nullptr, APP_ACTION_OPEN, APP_MATERIAL},
+  {"I need personal help", "Choose a feeling to see support options.", nullptr, nullptr, APP_ACTION_OPEN, APP_EMOTIONS},
+  {"I need to talk to the teacher in private", "Send a private-conversation request to the teacher.", "I need to talk to the teacher in private", nullptr, APP_ACTION_SEND, 0}
+};
+
+static const AppOption materialOptions[] = {
+  {"Ask a friend for help", "Try asking a classmate for help.", nullptr, nullptr, APP_ACTION_DETAIL, 0},
+  {"Can you explain the last problem?", "Send this request to the teacher.", "Can you explain the last problem?", nullptr, APP_ACTION_SEND, 0},
+  {"Can you explain this problem?", "Send this request to the teacher.", "Can you explain this problem?", nullptr, APP_ACTION_SEND, 0},
+  {"I need more time", "Send this request to the teacher.", "I need more time", nullptr, APP_ACTION_SEND, 0},
+  {"Could you repeat the directions?", "Send this request to the teacher.", "Could you repeat the directions?", nullptr, APP_ACTION_SEND, 0},
+  {"Request teacher help", "Send this request to the teacher.", "Request teacher help", nullptr, APP_ACTION_SEND, 0},
+  {"Could you show me another example?", "Send this request to the teacher.", "Could you show me another example?", nullptr, APP_ACTION_SEND, 0}
+};
+
+static const AppOption emotionOptions[] = {
+  {"Distracted", "Choose an option for feeling distracted.", nullptr, nullptr, APP_ACTION_OPEN, 0},
+  {"Worried", "Choose an option for feeling worried.", nullptr, nullptr, APP_ACTION_OPEN, 1},
+  {"Upset", "Choose an option for feeling upset.", nullptr, nullptr, APP_ACTION_OPEN, 2},
+  {"Frustrated", "Choose an option for feeling frustrated.", nullptr, nullptr, APP_ACTION_OPEN, 3},
+  {"Uncomfortable", "Choose an option for feeling uncomfortable.", nullptr, nullptr, APP_ACTION_OPEN, 4}
+};
+
+static const AppOption distractedOptions[] = {
+  {"Box breathing", "1. Breathe in for 4 seconds.\n2. Hold your breath for 4 seconds.\n3. Breathe out for 4 seconds.\n4. Hold your breath for 4 seconds.\n5. Repeat steps 1-4.", nullptr, nullptr, APP_ACTION_DETAIL, 0},
+  {"Ask for the class to be quieter", "Send this request to the teacher.", "Could the class be quieter, please?", nullptr, APP_ACTION_SEND, 0},
+  {"Ask for a fidget toy", "Send this request to the teacher.", "Could I use a fidget toy, please?", nullptr, APP_ACTION_SEND, 0},
+  {"Custom Message", "Write a message for the teacher.", nullptr, nullptr, APP_ACTION_EDIT_CUSTOM, 0}
+};
+
+static const AppOption worriedOptions[] = {
+  {"Request to talk to the teacher", "Send this request to the teacher.", "I would like to talk to the teacher.", nullptr, APP_ACTION_SEND, 0},
+  {"Box breathing", "1. Breathe in for 4 seconds.\n2. Hold your breath for 4 seconds.\n3. Breathe out for 4 seconds.\n4. Hold your breath for 4 seconds.\n5. Repeat steps 1-4.", nullptr, nullptr, APP_ACTION_DETAIL, 0},
+  {"Positive self-talk", "1. Notice the thought I am having.\n2. Ask: Would I say this to a friend?\n3. Choose words that are true, fair, and kind.\n4. Try: This is hard, but I can try one step or ask for help.\n5. Choose one small next step.", nullptr, nullptr, APP_ACTION_DETAIL, 0},
+  {"Externalizing worries", "1. Name the worry.\n2. Write or draw what the worry is saying.\n3. Ask: What do I know for sure?\n4. Think of one small thing I can do now.\n5. If I still need help, tell a trusted adult.", nullptr, nullptr, APP_ACTION_DETAIL, 0},
+  {"Custom Message", "Write a message for the teacher.", nullptr, nullptr, APP_ACTION_EDIT_CUSTOM, 0}
+};
+
+static const AppOption upsetOptions[] = {
+  {"Could I take a walk?", "Send this request to the teacher.", "Could I take a walk?", nullptr, APP_ACTION_SEND, 0},
+  {"Box breathing", "1. Breathe in for 4 seconds.\n2. Hold your breath for 4 seconds.\n3. Breathe out for 4 seconds.\n4. Hold your breath for 4 seconds.\n5. Repeat steps 1-4.", nullptr, nullptr, APP_ACTION_DETAIL, 0},
+  {"Ask the teacher to talk in private", "Send this request to the teacher.", "Could I talk with you in private?", nullptr, APP_ACTION_SEND, 0},
+  {"Ask to talk to somebody (such as a guidance counselor)", "Send this request to the teacher.", "Could I talk to somebody, such as a guidance counselor?", nullptr, APP_ACTION_SEND, 0},
+  {"Use the COPE Method", "COPE steps have not been configured. Please ask a trusted adult for the school-approved steps.", nullptr, nullptr, APP_ACTION_DETAIL, 0},
+  {"Custom Message", "Write a message for the teacher.", nullptr, nullptr, APP_ACTION_EDIT_CUSTOM, 0}
+};
+
+static const AppOption frustratedOptions[] = {
+  {"Box breathing", "1. Breathe in for 4 seconds.\n2. Hold your breath for 4 seconds.\n3. Breathe out for 4 seconds.\n4. Hold your breath for 4 seconds.\n5. Repeat steps 1-4.", nullptr, nullptr, APP_ACTION_DETAIL, 0},
+  {"Could I take a walk?", "Send this request to the teacher.", "Could I take a walk?", nullptr, APP_ACTION_SEND, 0},
+  {"Custom Message", "Write a message for the teacher.", nullptr, nullptr, APP_ACTION_EDIT_CUSTOM, 0}
+};
+
+static const AppOption uncomfortableOptions[] = {
+  {"Write how you are feeling", "Write up to three notes. They stay on this device and are not sent.", nullptr, nullptr, APP_ACTION_NOTES, 0},
+  {"Ask teacher to take a break", "Send this request to the teacher.", "Could I take a break?", nullptr, APP_ACTION_SEND, 0},
+  {"Custom Message", "Write a message for the teacher.", nullptr, nullptr, APP_ACTION_EDIT_CUSTOM, 0}
+};
+
 // Values that have to survive from one loop() pass to the next.
 // If they were created inside loop(), they would reset every time.
 static LGFX lcd;
 static Preferences prefs;             // handle for the flash settings
 static bool expanderOk = false;       // true after the small I2C chip answers
-static int currentScreen = SCREEN_HELLO;
+static int currentScreen = APP_HELLO;
 static int returnScreen = SCREEN_MENU; // screen to reopen when settings closes
 static int selectedMenu = 0;          // which feeling was tapped
 static int submenuPos = 0;            // which response inside that feeling
@@ -407,9 +501,11 @@ static unsigned long screenMs = 0;    // when the greeting was shown
 static unsigned long tapMs = 0;       // when the last accepted tap happened
 static bool touchWasDown = false;     // so one press counts once, not every loop
 static bool nameDirty = false;        // name changed, so Done should show the greeting
-static bool linkReady = false;        // true after Bluetooth starts
+static bool linkReady = false;        // true after the BLE client starts
+static bool bleReady = false;
+static bool bleSending = false;
 static bool noticeSent = false;       // true after a selection reaches the teacher
-static bool needSend = false;         // a selection is waiting to be sent
+static bool needSend = false;
 static uint32_t nextEventId = 1;      // counts selections so a reply finds the right one
 static uint32_t waitingId = 0;        // event the panel is waiting on
 static uint8_t teacherReply = CLEAR_ANSWER_NONE;
@@ -421,10 +517,28 @@ static BLERemoteCharacteristic *noticeRemote = nullptr;
 static BLERemoteCharacteristic *replyRemote = nullptr;
 static unsigned long nextBleMs = 0;
 static unsigned long clockMs = 0;
-static char studentName[STUDENT_NAME_MAX + 1] = "Connor"; // name on the greeting
-static char nameEdit[STUDENT_NAME_MAX + 1] = "Connor";    // name being typed, not saved yet
+static char studentName[STUDENT_NAME_MAX + 1] = ""; // name on the greeting
+static char nameEdit[STUDENT_NAME_MAX + 1] = "";    // name being typed, not saved yet
+static char appText[APP_TEXT_MAX + 1] = "";
+static char appPrefix[48] = "";
+static char feelingNotes[3][APP_TEXT_MAX + 1] = {};
+static const AppOption *appSelectedOption = nullptr;
+static int appParentScreen = APP_MENU;
+static int appEditorMode = 0;
+static int selectedEmotion = 0;
+static int selectedNoteLine = 0;
+static char appCategory[24] = "General";
 static int brightnessPct = 80;
 static int gradeLevel = GRADE_LIVE;
+
+static bool isAppScreen(int screen);
+static void paintAppScreen();
+static void paintAppHello();
+static void paintAppList();
+static void paintAppDetail();
+static void paintAppEditor();
+static void paintAppFeelingNotes();
+static void handleAppTap(int32_t x, int32_t y);
 
 // Send one byte to a register on the PCA9557 over I2C.
 // Returns true when the chip acknowledges. The register numbers
@@ -496,7 +610,7 @@ static void applyBrightness() {
 // by character so a damaged save cannot put odd symbols on the greeting.
 static void loadSettings() {
   prefs.begin("clear", true);
-  String stored = prefs.getString("name", "Connor");
+  String stored = prefs.getString("name", "");
   brightnessPct = prefs.getInt("bright", 80);
   gradeLevel = prefs.getInt("grade", GRADE_LIVE);
   prefs.end();
@@ -515,9 +629,6 @@ static void loadSettings() {
     studentName[n++] = c;
   }
   studentName[n] = 0;
-  if (studentName[0] == 0) {
-    copyName(studentName, "Connor");
-  }
   if (brightnessPct < BRIGHT_MIN) {
     brightnessPct = BRIGHT_MIN;
   }
@@ -543,7 +654,7 @@ static void saveSettings() {
   prefs.end();
 }
 
-// Copy text into one of the fixed radio fields and always end with a 0.
+// Copy text into one of the fixed BLE fields and always end with a 0.
 static void copyField(char *dest, int size, const char *src) {
   int i = 0;
   if (src == nullptr) {
@@ -556,8 +667,7 @@ static void copyField(char *dest, int size, const char *src) {
   dest[i] = 0;
 }
 
-// The radio task calls this when a packet arrives. It only stores the
-// packet. Drawing and the screen stay in loop(), where they are safe.
+// The BLE callback only stores the packet. Drawing stays in loop().
 static void takeLinkPacket(const uint8_t *data, int len) {
   if (len != (int)sizeof(ClearNote)) {
     return;
@@ -571,9 +681,6 @@ static void takeLinkPacket(const uint8_t *data, int len) {
   interrupts();
 }
 
-// Neither board has a clock battery. This panel starts at the time the
-// sketch was uploaded, then saves the time every minute. A reboot
-// continues from the last save. Time while the panel is unplugged is lost.
 static const char *CLOCK_TZ = "MST7MDT,M3.2.0,M11.1.0";
 
 static time_t compiledLocal() {
@@ -626,7 +733,8 @@ static void startClock() {
   clockMs = millis();
 }
 
-static void onTeacherReply(BLERemoteCharacteristic *characteristic, uint8_t *data, size_t len, bool isNotify) {
+static void onTeacherReply(BLERemoteCharacteristic *characteristic,
+                           uint8_t *data, size_t len, bool isNotify) {
   (void)characteristic;
   (void)isNotify;
   takeLinkPacket(data, (int)len);
@@ -647,6 +755,9 @@ static bool connectTeacher() {
     return noticeRemote != nullptr && replyRemote != nullptr;
   }
   BLEScan *scan = BLEDevice::getScan();
+  if (scan == nullptr) {
+    return false;
+  }
   scan->setActiveScan(true);
   BLEScanResults *results = scan->start(2, false);
   BLEAdvertisedDevice found;
@@ -667,12 +778,15 @@ static bool connectTeacher() {
   }
   if (teacherClient == nullptr) {
     teacherClient = BLEDevice::createClient();
+    if (teacherClient == nullptr) {
+      return false;
+    }
     teacherClient->setClientCallbacks(&teacherClientCallbacks);
   }
   if (!teacherClient->connect(&found)) {
     return false;
   }
-  teacherClient->setMTU(185);
+  teacherClient->setMTU(CLEAR_BLE_MTU);
   BLERemoteService *service = teacherClient->getService(CLEAR_SERVICE_UUID);
   if (service == nullptr) {
     teacherClient->disconnect();
@@ -694,24 +808,29 @@ static bool connectTeacher() {
   return true;
 }
 
+static bool hasStatusFooter() {
+  return currentScreen != APP_HELLO && currentScreen != APP_EDITOR &&
+         currentScreen != SCREEN_HELLO && currentScreen != SCREEN_SETTINGS &&
+         currentScreen != SCREEN_NAME;
+}
+
 static void sendOutbound() {
   if (noticeRemote == nullptr) {
     return;
   }
-  noticeSent = noticeRemote->writeValue((uint8_t *)&outboundNote, sizeof(outboundNote), true);
+  noticeSent = noticeRemote->writeValue((uint8_t *)&outboundNote,
+                                        sizeof(outboundNote), true);
   if (noticeSent) {
     needSend = false;
   } else {
     nextBleMs = millis() + 4000;
   }
-  if (currentScreen != SCREEN_SETTINGS && currentScreen != SCREEN_NAME) {
+  bleSending = false;
+  if (hasStatusFooter()) {
     paintStatus();
   }
 }
 
-// Look for the teacher device when a selection is waiting, or when a
-// Yes or No has not come back yet. Scanning takes a moment, so it does
-// not run on every pass.
 static void blePump() {
   if (!linkReady) {
     return;
@@ -720,7 +839,8 @@ static void blePump() {
   if (!needSend && !waitingAnswer) {
     return;
   }
-  if (teacherClient != nullptr && teacherClient->isConnected() && noticeRemote != nullptr) {
+  if (teacherClient != nullptr && teacherClient->isConnected() &&
+      noticeRemote != nullptr) {
     if (needSend && millis() >= nextBleMs) {
       sendOutbound();
     }
@@ -730,10 +850,15 @@ static void blePump() {
     return;
   }
   nextBleMs = millis() + 4000;
+  bleSending = needSend;
+  if (hasStatusFooter()) {
+    paintStatus();
+  }
   if (!connectTeacher()) {
     if (needSend) {
       noticeSent = false;
-      if (currentScreen != SCREEN_SETTINGS && currentScreen != SCREEN_NAME) {
+      bleSending = false;
+      if (hasStatusFooter()) {
         paintStatus();
       }
     }
@@ -747,8 +872,9 @@ static void blePump() {
 static void startTeacherLink() {
   startClock();
   BLEDevice::init("");
-  BLEDevice::setMTU(185);
+  BLEDevice::setMTU(CLEAR_BLE_MTU);
   linkReady = true;
+  bleReady = true;
 }
 
 // Redraw only the strip along the bottom. It says whether the last
@@ -759,7 +885,9 @@ static void paintStatus() {
   lcd.setFont(&fonts::Font2);
   lcd.setTextColor(COL_FG, COL_FOOT);
   lcd.setCursor(24, 440);
-  if (teacherReply == CLEAR_ANSWER_YES) {
+  if (bleSending) {
+    lcd.print("Sending to the teacher...");
+  } else if (teacherReply == CLEAR_ANSWER_YES) {
     lcd.print("Teacher said yes");
   } else if (teacherReply == CLEAR_ANSWER_NO) {
     lcd.print("Teacher said no");
@@ -767,8 +895,8 @@ static void paintStatus() {
     lcd.print("Sent to the teacher");
   } else if (waitingId != 0) {
     lcd.print("Could not send");
-  } else if (!linkReady) {
-    lcd.print("Teacher not found");
+  } else if (!bleReady) {
+    lcd.print("Bluetooth is off");
   } else {
     lcd.print("Ready");
   }
@@ -917,7 +1045,7 @@ static void paintBackButton() {
   paintTopButton(BACK_X, BACK_Y, BACK_W, BACK_H, "Back", COL_ROW);
 }
 
-// A simple face for the K feelings list. which matches menu[]:
+// Legacy face asset for the former K-level feelings list.
 // 0 worried, 1 bored, 2 help, 3 mad, 4 upset. Any other number is a
 // plain smile, used on the greeting. The word sits beside the face.
 static void drawFeelingFace(int which, int cx, int cy) {
@@ -1303,13 +1431,21 @@ static int collectKeys(KeyHit *out) {
   }
 
   int y = KEY_TOP + 3 * (KEY_H + KEY_GAP);
-  int markW = 80;
-  int clearW = 160;
-  int spaceW = KEY_AREA_W - markW - markW - clearW - 3 * KEY_GAP;
+  int markW = 48;
+  int clearW = 104;
+  int spaceW = KEY_AREA_W - markW * 6 - clearW - 7 * KEY_GAP;
   int x = KEY_LEFT;
   n = pushKey(out, n, KEY_CHAR, '\'', x, y, markW, KEY_H);
   x += markW + KEY_GAP;
   n = pushKey(out, n, KEY_CHAR, '-', x, y, markW, KEY_H);
+  x += markW + KEY_GAP;
+  n = pushKey(out, n, KEY_CHAR, '?', x, y, markW, KEY_H);
+  x += markW + KEY_GAP;
+  n = pushKey(out, n, KEY_CHAR, '.', x, y, markW, KEY_H);
+  x += markW + KEY_GAP;
+  n = pushKey(out, n, KEY_CHAR, ',', x, y, markW, KEY_H);
+  x += markW + KEY_GAP;
+  n = pushKey(out, n, KEY_CHAR, '!', x, y, markW, KEY_H);
   x += markW + KEY_GAP;
   n = pushKey(out, n, KEY_SPACE, ' ', x, y, spaceW, KEY_H);
   x += spaceW + KEY_GAP;
@@ -1454,7 +1590,7 @@ static void showMainMenu() {
   paintMainMenu();
 }
 
-// Open the response list for feeling number index.
+// Open the legacy response list for feeling number index.
 static void openSubmenu(int index) {
   selectedMenu = index;
   submenuPos = 0;
@@ -1475,7 +1611,6 @@ static void notifyTeacher() {
   waitingId = note.eventId;
   teacherReply = CLEAR_ANSWER_NONE;
   noticeSent = false;
-  // Full words go in the log, even when K is showing a shorter word.
   note.timeSent = (uint32_t)time(nullptr);
   copyField(note.student, sizeof(note.student), studentName);
   copyField(note.feeling, sizeof(note.feeling), menu[selectedMenu]);
@@ -1494,7 +1629,7 @@ static void showSelectedItem(int index) {
   paintSelected();
 }
 
-// Detail page goes back to its response list. The response list
+// The legacy detail page goes back to its response list. The response list
 // goes back to the five feelings. Settings does not use this.
 static void goBack() {
   if (currentScreen == SCREEN_SELECTED) {
@@ -1510,8 +1645,25 @@ static void goBack() {
 // screenMs is reset so that greeting gets a fresh two seconds.
 static void showReturnScreen() {
   int dest = returnScreen;
-  if (nameDirty || dest == SCREEN_HELLO || dest == SCREEN_SETTINGS || dest == SCREEN_NAME) {
+  if (nameDirty) {
     nameDirty = false;
+    screenMs = millis();
+    if (isAppScreen(dest)) {
+      copyName(nameEdit, studentName);
+      currentScreen = APP_HELLO;
+      paintAppHello();
+    } else {
+      currentScreen = SCREEN_HELLO;
+      paintHello();
+    }
+    return;
+  }
+  if (isAppScreen(dest)) {
+    currentScreen = dest;
+    paintAppScreen();
+    return;
+  }
+  if (dest == SCREEN_HELLO || dest == SCREEN_SETTINGS || dest == SCREEN_NAME) {
     screenMs = millis();
     currentScreen = SCREEN_HELLO;
     paintHello();
@@ -1611,6 +1763,492 @@ static void setGrade(int index) {
   paintSettings();
 }
 
+static bool isAppScreen(int screen) {
+  return screen >= APP_HELLO && screen <= APP_FEELING_NOTES;
+}
+
+static const char *emotionName(int index) {
+  static const char *names[] = {"Distracted", "Worried", "Upset", "Frustrated", "Uncomfortable"};
+  if (index < 0 || index >= 5) {
+    return "Personal help";
+  }
+  return names[index];
+}
+
+static const AppOption *appOptionsFor(int screen, int &count) {
+  switch (screen) {
+    case APP_MENU:
+      count = sizeof(mainOptions) / sizeof(mainOptions[0]);
+      return mainOptions;
+    case APP_QUESTION:
+      count = sizeof(questionOptions) / sizeof(questionOptions[0]);
+      return questionOptions;
+    case APP_HELP:
+      count = sizeof(helpOptions) / sizeof(helpOptions[0]);
+      return helpOptions;
+    case APP_MATERIAL:
+      count = sizeof(materialOptions) / sizeof(materialOptions[0]);
+      return materialOptions;
+    case APP_EMOTIONS:
+      count = sizeof(emotionOptions) / sizeof(emotionOptions[0]);
+      return emotionOptions;
+    case APP_EMOTION_OPTIONS:
+      if (selectedEmotion == 0) {
+        count = sizeof(distractedOptions) / sizeof(distractedOptions[0]);
+        return distractedOptions;
+      }
+      if (selectedEmotion == 1) {
+        count = sizeof(worriedOptions) / sizeof(worriedOptions[0]);
+        return worriedOptions;
+      }
+      if (selectedEmotion == 2) {
+        count = sizeof(upsetOptions) / sizeof(upsetOptions[0]);
+        return upsetOptions;
+      }
+      if (selectedEmotion == 3) {
+        count = sizeof(frustratedOptions) / sizeof(frustratedOptions[0]);
+        return frustratedOptions;
+      }
+      count = sizeof(uncomfortableOptions) / sizeof(uncomfortableOptions[0]);
+      return uncomfortableOptions;
+  }
+  count = 0;
+  return nullptr;
+}
+
+static const char *appTitle(int screen) {
+  switch (screen) {
+    case APP_MENU: return "Choose what you need";
+    case APP_QUESTION: return "I have a question";
+    case APP_HELP: return "I need help with...";
+    case APP_MATERIAL: return "Help with the material";
+    case APP_EMOTIONS: return "How are you feeling?";
+    case APP_EMOTION_OPTIONS: return emotionName(selectedEmotion);
+    case APP_DETAIL: return appSelectedOption ? appSelectedOption->label : "Support";
+    case APP_EDITOR: return "Write a message";
+    case APP_FEELING_NOTES: return "Write how you are feeling";
+  }
+  return "";
+}
+
+static void paintAppHeader(const char *title, bool canGoBack) {
+  lcd.fillScreen(COL_BG);
+  lcd.setTextDatum(textdatum_t::middle_left);
+  lcd.setFont(&fonts::Font4);
+  lcd.setTextColor(COL_FG, COL_BG);
+  lcd.drawString(title, 24, 30);
+  if (canGoBack) {
+    paintBackButton();
+  }
+}
+
+static void paintAppHello() {
+  lcd.fillScreen(COL_BG);
+  lcd.setTextDatum(textdatum_t::middle_left);
+  lcd.setTextColor(COL_FG, COL_BG);
+  lcd.setFont(&fonts::Font4);
+  char greeting[STUDENT_NAME_MAX + 16];
+  snprintf(greeting, sizeof(greeting), "Hello, %s", nameEdit[0] ? nameEdit : "your name");
+  lcd.drawString(greeting, 24, 32);
+  paintTopButton(DONE_X, DONE_Y, DONE_W, DONE_H, "Save name", nameEdit[0] ? COL_TRY : COL_ROW);
+
+  lcd.fillRoundRect(FIELD_X, 62, FIELD_W, 66, 12, COL_ROW);
+  lcd.setFont(&fonts::Font2);
+  lcd.setTextColor(COL_FG, COL_ROW);
+  lcd.setTextDatum(textdatum_t::middle_left);
+  lcd.drawString("Type your name:", FIELD_X + 16, 95);
+  lcd.setFont(&fonts::Font4);
+  lcd.drawString(nameEdit, FIELD_X + 190, 95);
+
+  KeyHit keys[KEY_MAX];
+  int count = collectKeys(keys);
+  for (int i = 0; i < count; i++) {
+    uint16_t fill = (keys[i].action == KEY_BACKSPACE || keys[i].action == KEY_CLEAR) ? COL_FOOT : COL_ROW;
+    char label[8];
+    keyLabel(&keys[i], label, sizeof(label));
+    paintTopButton(keys[i].x, keys[i].y, keys[i].w, keys[i].h, label, fill);
+  }
+  lcd.setTextDatum(textdatum_t::top_left);
+}
+
+static void paintAppList() {
+  int count = 0;
+  const AppOption *options = appOptionsFor(currentScreen, count);
+  paintAppHeader(appTitle(currentScreen), currentScreen != APP_MENU);
+  paintGearButton();
+  int height = rowHeightFor(count);
+  for (int i = 0; i < count; i++) {
+    int top = rowTopFor(i, count);
+    bool hasSideAction = options[i].action == APP_ACTION_SEND ||
+                         options[i].action == APP_ACTION_EDIT_TEMPLATE ||
+                         options[i].action == APP_ACTION_EDIT_CUSTOM;
+    int buttonW = hasSideAction ? 112 : 0;
+    int textW = ROW_W - 32 - (hasSideAction ? buttonW + 12 : 0);
+    lcd.fillRoundRect(ROW_X, top, ROW_W, height, 12, COL_ROW);
+    lcd.setTextColor(COL_FG, COL_ROW);
+    bool smallText = count > 4 || gradeLevel == GRADE_5;
+    lcd.setFont(smallText ? &fonts::Font2 : &fonts::Font4);
+    drawWrapped(options[i].label, ROW_X + 16, top + 6, textW, smallText);
+    if (hasSideAction) {
+      const char *buttonLabel = options[i].action == APP_ACTION_SEND ? "Send" : "Write";
+      int bx = ROW_X + ROW_W - buttonW - 8;
+      paintTopButton(bx, top + 4, buttonW, height - 8, buttonLabel, COL_TRY);
+    }
+  }
+  paintStatus();
+  lcd.setTextDatum(textdatum_t::top_left);
+}
+
+static void paintAppDetail() {
+  paintAppHeader(appTitle(APP_DETAIL), true);
+  if (appSelectedOption != nullptr) {
+    drawWrapped(appSelectedOption->help, 28, 88, 744, gradeLevel == GRADE_5);
+    if (appSelectedOption->action == APP_ACTION_SEND) {
+      paintTopButton(DONE_X, 350, DONE_W, 48, "Send", COL_TRY);
+    } else if (appSelectedOption->action == APP_ACTION_EDIT_TEMPLATE ||
+               appSelectedOption->action == APP_ACTION_EDIT_CUSTOM) {
+      paintTopButton(DONE_X, 350, DONE_W, 48, "Write", COL_TRY);
+    }
+  }
+  paintStatus();
+  lcd.setTextDatum(textdatum_t::top_left);
+}
+
+static void paintAppEditor() {
+  paintAppHeader("Write a message", true);
+  paintTopButton(DONE_X, DONE_Y, DONE_W, DONE_H, appEditorMode == 2 ? "Save" : "Send",
+                 appText[0] ? COL_TRY : COL_ROW);
+  lcd.fillRoundRect(FIELD_X, FIELD_Y, FIELD_W, FIELD_H, 12, COL_ROW);
+  lcd.setTextColor(COL_FG, COL_ROW);
+  lcd.setFont(&fonts::Font2);
+  if (appPrefix[0]) {
+    drawWrapped(appPrefix, FIELD_X + 12, FIELD_Y + 4, FIELD_W - 24, true);
+  }
+  drawWrapped(appText[0] ? appText : "Type your message below", FIELD_X + 12,
+              FIELD_Y + (appPrefix[0] ? 30 : 10), FIELD_W - 24, true);
+  KeyHit keys[KEY_MAX];
+  int count = collectKeys(keys);
+  for (int i = 0; i < count; i++) {
+    uint16_t fill = (keys[i].action == KEY_BACKSPACE || keys[i].action == KEY_CLEAR) ? COL_FOOT : COL_ROW;
+    char label[8];
+    keyLabel(&keys[i], label, sizeof(label));
+    paintTopButton(keys[i].x, keys[i].y, keys[i].w, keys[i].h, label, fill);
+  }
+  lcd.setTextDatum(textdatum_t::top_left);
+}
+
+static void paintAppFeelingNotes() {
+  paintAppHeader(appTitle(APP_FEELING_NOTES), true);
+  static const char *prompts[] = {
+    "- I feel...",
+    "- What happened?",
+    "- What might help?"
+  };
+  for (int i = 0; i < 3; i++) {
+    int top = rowTopFor(i, 3);
+    lcd.fillRoundRect(ROW_X, top, ROW_W, 64, 12, COL_ROW);
+    lcd.setTextDatum(textdatum_t::middle_left);
+    lcd.setFont(&fonts::Font2);
+    lcd.setTextColor(COL_FG, COL_ROW);
+    lcd.drawString(prompts[i], ROW_X + 16, top + 20);
+    char preview[40];
+    copyField(preview, sizeof(preview), feelingNotes[i][0] ? feelingNotes[i] : "Tap to write");
+    if (strlen(preview) > 34) {
+      preview[31] = '.';
+      preview[32] = '.';
+      preview[33] = '.';
+      preview[34] = 0;
+    }
+    lcd.drawString(preview, ROW_X + 250, top + 42);
+  }
+  lcd.setTextDatum(textdatum_t::top_left);
+  paintStatus();
+}
+
+static void paintAppScreen() {
+  if (currentScreen == APP_HELLO) {
+    paintAppHello();
+  } else if (currentScreen == APP_DETAIL) {
+    paintAppDetail();
+  } else if (currentScreen == APP_EDITOR) {
+    paintAppEditor();
+  } else if (currentScreen == APP_FEELING_NOTES) {
+    paintAppFeelingNotes();
+  } else {
+    paintAppList();
+  }
+}
+
+static void appOpenEditor(const AppOption *option, int parent) {
+  appSelectedOption = option;
+  appParentScreen = parent;
+  appEditorMode = 0;
+  copyField(appPrefix, sizeof(appPrefix), option->prefix);
+  appText[0] = 0;
+  copyField(appCategory, sizeof(appCategory), emotionName(selectedEmotion));
+  if (parent == APP_QUESTION) {
+    copyField(appCategory, sizeof(appCategory), "Question");
+  }
+  currentScreen = APP_EDITOR;
+  paintAppEditor();
+}
+
+static bool sendTeacherMessage(const char *category, const char *message) {
+  if (message == nullptr || message[0] == 0) {
+    return false;
+  }
+  ClearNote note = {};
+  note.version = CLEAR_LINK_VERSION;
+  note.kind = CLEAR_KIND_NOTICE;
+  note.asksTeacher = 1;
+  note.answer = CLEAR_ANSWER_NONE;
+  note.eventId = nextEventId++;
+  note.timeSent = (uint32_t)time(nullptr);
+  copyField(note.student, sizeof(note.student), studentName);
+  copyField(note.feeling, sizeof(note.feeling), category);
+  copyField(note.choice, sizeof(note.choice), message);
+  waitingId = note.eventId;
+  teacherReply = CLEAR_ANSWER_NONE;
+  noticeSent = false;
+  outboundNote = note;
+  needSend = true;
+  nextBleMs = 0;
+  bleSending = true;
+  saveClock();
+  if (hasStatusFooter()) {
+    paintStatus();
+  }
+  return true;
+}
+
+static void beginAppEditor(const AppOption *option, int parent) {
+  if (option->action == APP_ACTION_EDIT_TEMPLATE || option->action == APP_ACTION_EDIT_CUSTOM) {
+    appOpenEditor(option, parent);
+  }
+}
+
+static void openAppDetail(const AppOption *option, int parent) {
+  appSelectedOption = option;
+  appParentScreen = parent;
+  if (parent == APP_QUESTION) {
+    copyField(appCategory, sizeof(appCategory), "Question");
+  } else if (parent == APP_MATERIAL) {
+    copyField(appCategory, sizeof(appCategory), "Material help");
+  } else {
+    copyField(appCategory, sizeof(appCategory), emotionName(selectedEmotion));
+  }
+  currentScreen = APP_DETAIL;
+  paintAppDetail();
+}
+
+static void handleAppOption(const AppOption *option, int parent, bool sideButton) {
+  if (parent == APP_QUESTION) {
+    copyField(appCategory, sizeof(appCategory), "Question");
+  } else if (parent == APP_MATERIAL) {
+    copyField(appCategory, sizeof(appCategory), "Material help");
+  } else if (parent == APP_EMOTION_OPTIONS) {
+    copyField(appCategory, sizeof(appCategory), emotionName(selectedEmotion));
+  } else if (parent == APP_HELP) {
+    copyField(appCategory, sizeof(appCategory), "Help");
+  } else {
+    copyField(appCategory, sizeof(appCategory), "General");
+  }
+  if (option->action == APP_ACTION_OPEN) {
+    if (parent == APP_EMOTIONS) {
+      selectedEmotion = option->target;
+      currentScreen = APP_EMOTION_OPTIONS;
+    } else {
+      currentScreen = option->target;
+    }
+    paintAppScreen();
+  } else if (option->action == APP_ACTION_NOTES) {
+    currentScreen = APP_FEELING_NOTES;
+    paintAppFeelingNotes();
+  } else if (option->action == APP_ACTION_EDIT_TEMPLATE ||
+             option->action == APP_ACTION_EDIT_CUSTOM) {
+    beginAppEditor(option, parent);
+  } else if (option->action == APP_ACTION_SEND &&
+             (sideButton || parent == APP_MENU || parent == APP_HELP)) {
+    sendTeacherMessage(parent == APP_MENU ? "Main menu" : appCategory, option->message);
+    paintStatus();
+  } else {
+    openAppDetail(option, parent);
+  }
+}
+
+static void saveAppEditor() {
+  if (appEditorMode == 2) {
+    copyField(feelingNotes[selectedNoteLine], sizeof(feelingNotes[selectedNoteLine]), appText);
+    currentScreen = APP_FEELING_NOTES;
+    paintAppFeelingNotes();
+    return;
+  }
+  if (appText[0] == 0) {
+    paintAppEditor();
+    return;
+  }
+  char message[CLEAR_CHOICE_SIZE];
+  snprintf(message, sizeof(message), "%s%s", appPrefix, appText);
+  bool sent = sendTeacherMessage(appCategory, message);
+  currentScreen = appParentScreen;
+  paintAppScreen();
+  if (!sent) {
+    paintStatus();
+  }
+}
+
+static void applyAppKey(char *text, int capacity, const KeyHit *key, bool titleCase) {
+  int length = strlen(text);
+  if (key->action == KEY_BACKSPACE) {
+    if (length > 0) {
+      text[length - 1] = 0;
+    }
+  } else if (key->action == KEY_CLEAR) {
+    text[0] = 0;
+  } else if (key->action == KEY_CHAR || key->action == KEY_SPACE) {
+    if (length >= capacity - 1) {
+      return;
+    }
+    char c = key->action == KEY_SPACE ? ' ' : key->ch;
+    if ((c == ' ' || c == '-' || c == '\'') &&
+        (length == 0 || text[length - 1] == c)) {
+      return;
+    }
+    bool lowerCase = titleCase
+      ? (length > 0 && text[length - 1] != ' ' &&
+         text[length - 1] != '-' && text[length - 1] != '\'')
+      : (length > 0);
+    if (c >= 'A' && c <= 'Z' && lowerCase) {
+      c = c - 'A' + 'a';
+    }
+    text[length] = c;
+    text[length + 1] = 0;
+  }
+}
+
+static void handleAppTap(int32_t x, int32_t y) {
+  if (currentScreen == APP_HELLO) {
+    if (inBox(x, y, DONE_X, DONE_Y, DONE_W, DONE_H)) {
+      trimName(nameEdit);
+      if (nameEdit[0]) {
+        copyName(studentName, nameEdit);
+        saveSettings();
+        currentScreen = APP_MENU;
+        paintAppList();
+      }
+      return;
+    }
+    KeyHit keys[KEY_MAX];
+    int count = collectKeys(keys);
+    for (int i = 0; i < count; i++) {
+      if (inBox(x, y, keys[i].x, keys[i].y, keys[i].w, keys[i].h)) {
+        applyAppKey(nameEdit, sizeof(nameEdit), &keys[i], true);
+        paintAppHello();
+        return;
+      }
+    }
+    return;
+  }
+
+  if (currentScreen == APP_DETAIL) {
+    if (inBox(x, y, BACK_X, BACK_Y, BACK_W, BACK_H)) {
+      currentScreen = appParentScreen;
+      paintAppScreen();
+    } else if (appSelectedOption != nullptr &&
+               inBox(x, y, DONE_X, 350, DONE_W, 48)) {
+      if (appSelectedOption->action == APP_ACTION_SEND) {
+        sendTeacherMessage(appCategory, appSelectedOption->message);
+        paintAppDetail();
+      } else {
+        beginAppEditor(appSelectedOption, appParentScreen);
+      }
+    }
+    return;
+  }
+
+  if (currentScreen == APP_EDITOR) {
+    if (inBox(x, y, NAME_BACK_X, NAME_BACK_Y, NAME_BACK_W, NAME_BACK_H)) {
+      currentScreen = appEditorMode == 2 ? APP_FEELING_NOTES : appParentScreen;
+      paintAppScreen();
+    } else if (inBox(x, y, DONE_X, DONE_Y, DONE_W, DONE_H)) {
+      saveAppEditor();
+    } else {
+      KeyHit keys[KEY_MAX];
+      int count = collectKeys(keys);
+      for (int i = 0; i < count; i++) {
+        if (inBox(x, y, keys[i].x, keys[i].y, keys[i].w, keys[i].h)) {
+          applyAppKey(appText, sizeof(appText), &keys[i], false);
+          paintAppEditor();
+          break;
+        }
+      }
+    }
+    return;
+  }
+
+  if (currentScreen == APP_FEELING_NOTES) {
+    if (inBox(x, y, BACK_X, BACK_Y, BACK_W, BACK_H)) {
+      currentScreen = APP_EMOTION_OPTIONS;
+      paintAppScreen();
+      return;
+    }
+    for (int i = 0; i < 3; i++) {
+      int top = rowTopFor(i, 3);
+      if (inBox(x, y, ROW_X, top, ROW_W, 64)) {
+        selectedNoteLine = i;
+        copyField(appText, sizeof(appText), feelingNotes[i]);
+        appPrefix[0] = 0;
+        appEditorMode = 2;
+        appParentScreen = APP_FEELING_NOTES;
+        currentScreen = APP_EDITOR;
+        paintAppEditor();
+        return;
+      }
+    }
+    return;
+  }
+
+  if (inBox(x, y, GEAR_X, GEAR_Y, GEAR_W, GEAR_H)) {
+    returnScreen = currentScreen;
+    currentScreen = SCREEN_SETTINGS;
+    paintSettings();
+    return;
+  }
+  if (currentScreen != APP_MENU && inBox(x, y, BACK_X, BACK_Y, BACK_W, BACK_H)) {
+    if (currentScreen == APP_EMOTION_OPTIONS) {
+      currentScreen = APP_EMOTIONS;
+    } else if (currentScreen == APP_EMOTIONS || currentScreen == APP_HELP) {
+      currentScreen = APP_MENU;
+    } else if (currentScreen == APP_MATERIAL) {
+      currentScreen = APP_HELP;
+    } else {
+      currentScreen = APP_MENU;
+    }
+    paintAppScreen();
+    return;
+  }
+
+  int count = 0;
+  const AppOption *options = appOptionsFor(currentScreen, count);
+  int height = rowHeightFor(count);
+  for (int i = 0; i < count; i++) {
+    int top = rowTopFor(i, count);
+    bool hasSideAction = options[i].action == APP_ACTION_SEND ||
+                         options[i].action == APP_ACTION_EDIT_TEMPLATE ||
+                         options[i].action == APP_ACTION_EDIT_CUSTOM;
+    int buttonW = hasSideAction ? 112 : 0;
+    int bx = ROW_X + ROW_W - buttonW - 8;
+    if (hasSideAction && inBox(x, y, bx, top + 4, buttonW, height - 8)) {
+      handleAppOption(&options[i], currentScreen, true);
+      return;
+    }
+    if (inBox(x, y, ROW_X, top, ROW_W, height)) {
+      handleAppOption(&options[i], currentScreen, false);
+      return;
+    }
+  }
+}
+
 // Runs once. Order matters: the expander and the saved settings are
 // ready before the panel starts, and the backlight level is applied
 // after init() because init() is what attaches PWM to pin 2.
@@ -1626,9 +2264,10 @@ void setup() {
   lcd.setRotation(0);      // 0 matches the touch map. Another value would move taps off the buttons.
   applyBrightness();
 
-  startTeacherLink();     // radio to the teacher device, not a phone hotspot
-  screenMs = millis();    // start the two-second greeting timer
-  paintHello();
+  startTeacherLink();     // BLE messages and teacher replies
+  copyName(nameEdit, studentName);
+  currentScreen = APP_HELLO;
+  paintAppHello();
 }
 
 // Repeats forever. Each pass checks for a teacher answer, maybe
@@ -1653,7 +2292,7 @@ void loop() {
         note.eventId == waitingId &&
         strcmp(note.student, studentName) == 0) {
       teacherReply = note.answer;
-      if (currentScreen != SCREEN_SETTINGS && currentScreen != SCREEN_NAME) {
+      if (hasStatusFooter()) {
         paintStatus();
       }
     }
@@ -1673,78 +2312,74 @@ void loop() {
   bool touchDown = lcd.getTouch(&tx, &ty);
   if (touchDown && !touchWasDown && (millis() - tapMs) >= TAP_GAP_MS) {
     tapMs = millis();
-    bool onGearScreen = currentScreen == SCREEN_HELLO ||
-                        currentScreen == SCREEN_MENU ||
-                        currentScreen == SCREEN_SUBMENU ||
-                        currentScreen == SCREEN_SELECTED;
-    // The gear is checked before the rest of the page. On the greeting,
-    // any other tap skips ahead to the feelings list.
-    if (onGearScreen && inBox(tx, ty, GEAR_X, GEAR_Y, GEAR_W, GEAR_H)) {
-      openSettings();
-    } else if (currentScreen == SCREEN_HELLO) {
-      showMainMenu();
-    // Feelings list: the row under the finger opens that feeling.
-    } else if (currentScreen == SCREEN_MENU) {
-      int height = rowHeightFor(totalLines);
-      for (int i = 0; i < totalLines; i++) {
-        if (inBox(tx, ty, ROW_X, rowTopFor(i, totalLines), ROW_W, height)) {
-          openSubmenu(i);
-          break;
-        }
-      }
-    // Response list: Back, or the row under the finger.
-    } else if (currentScreen == SCREEN_SUBMENU) {
-      if (inBox(tx, ty, BACK_X, BACK_Y, BACK_W, BACK_H)) {
-        goBack();
-      } else {
-        int count = submenuCount();
-        int height = rowHeightFor(count);
-        for (int i = 0; i < count; i++) {
-          if (inBox(tx, ty, ROW_X, rowTopFor(i, count), ROW_W, height)) {
-            showSelectedItem(i);
+    if (isAppScreen(currentScreen)) {
+      handleAppTap(tx, ty);
+    } else {
+      bool onGearScreen = currentScreen == SCREEN_HELLO ||
+                          currentScreen == SCREEN_MENU ||
+                          currentScreen == SCREEN_SUBMENU ||
+                          currentScreen == SCREEN_SELECTED;
+      if (onGearScreen && inBox(tx, ty, GEAR_X, GEAR_Y, GEAR_W, GEAR_H)) {
+        openSettings();
+      } else if (currentScreen == SCREEN_HELLO) {
+        showMainMenu();
+      } else if (currentScreen == SCREEN_MENU) {
+        int height = rowHeightFor(totalLines);
+        for (int i = 0; i < totalLines; i++) {
+          if (inBox(tx, ty, ROW_X, rowTopFor(i, totalLines), ROW_W, height)) {
+            openSubmenu(i);
             break;
           }
         }
-      }
-    // Detail page: only Back does anything. Other taps are ignored.
-    } else if (currentScreen == SCREEN_SELECTED) {
-      if (inBox(tx, ty, BACK_X, BACK_Y, BACK_W, BACK_H)) {
-        goBack();
-      }
-    // Settings: Done, the name row, brightness, or a grade row.
-    // The checks run in that order so a tap cannot hit two controls.
-    } else if (currentScreen == SCREEN_SETTINGS) {
-      if (inBox(tx, ty, DONE_X, DONE_Y, DONE_W, DONE_H)) {
-        showReturnScreen();
-      } else if (inBox(tx, ty, ROW_X, NAME_Y, ROW_W, NAME_H)) {
-        openNameEditor();
-      } else if (inBox(tx, ty, MINUS_X, BRIGHT_Y, STEP_W, BRIGHT_H)) {
-        setBrightnessPct(brightnessPct - 10);
-      } else if (inBox(tx, ty, PLUS_X, BRIGHT_Y, STEP_W, BRIGHT_H)) {
-        setBrightnessPct(brightnessPct + 10);
-      } else if (inBox(tx, ty, BAR_X, BRIGHT_Y, BAR_W, BRIGHT_H)) {
-        setBrightnessPct(brightnessFromX(tx));
-      } else {
-        for (int i = 0; i < GRADE_COUNT; i++) {
-          if (inBox(tx, ty, ROW_X, gradeRowTop(i), ROW_W, GRADE_H)) {
-            setGrade(i);
-            break;
+      } else if (currentScreen == SCREEN_SUBMENU) {
+        if (inBox(tx, ty, BACK_X, BACK_Y, BACK_W, BACK_H)) {
+          goBack();
+        } else {
+          int count = submenuCount();
+          int height = rowHeightFor(count);
+          for (int i = 0; i < count; i++) {
+            if (inBox(tx, ty, ROW_X, rowTopFor(i, count), ROW_W, height)) {
+              showSelectedItem(i);
+              break;
+            }
           }
         }
-      }
-    // Keyboard: Save, Back, or whichever key contains the tap.
-    } else if (currentScreen == SCREEN_NAME) {
-      if (inBox(tx, ty, DONE_X, DONE_Y, DONE_W, DONE_H)) {
-        saveNameEdit();
-      } else if (inBox(tx, ty, NAME_BACK_X, NAME_BACK_Y, NAME_BACK_W, NAME_BACK_H)) {
-        closeNameEditor();
-      } else {
-        KeyHit keys[KEY_MAX];
-        int count = collectKeys(keys);
-        for (int i = 0; i < count; i++) {
-          if (inBox(tx, ty, keys[i].x, keys[i].y, keys[i].w, keys[i].h)) {
-            applyKey(&keys[i]);
-            break;
+      } else if (currentScreen == SCREEN_SELECTED) {
+        if (inBox(tx, ty, BACK_X, BACK_Y, BACK_W, BACK_H)) {
+          goBack();
+        }
+      } else if (currentScreen == SCREEN_SETTINGS) {
+        if (inBox(tx, ty, DONE_X, DONE_Y, DONE_W, DONE_H)) {
+          showReturnScreen();
+        } else if (inBox(tx, ty, ROW_X, NAME_Y, ROW_W, NAME_H)) {
+          openNameEditor();
+        } else if (inBox(tx, ty, MINUS_X, BRIGHT_Y, STEP_W, BRIGHT_H)) {
+          setBrightnessPct(brightnessPct - 10);
+        } else if (inBox(tx, ty, PLUS_X, BRIGHT_Y, STEP_W, BRIGHT_H)) {
+          setBrightnessPct(brightnessPct + 10);
+        } else if (inBox(tx, ty, BAR_X, BRIGHT_Y, BAR_W, BRIGHT_H)) {
+          setBrightnessPct(brightnessFromX(tx));
+        } else {
+          for (int i = 0; i < GRADE_COUNT; i++) {
+            if (inBox(tx, ty, ROW_X, gradeRowTop(i), ROW_W, GRADE_H)) {
+              setGrade(i);
+              break;
+            }
+          }
+        }
+      } else if (currentScreen == SCREEN_NAME) {
+        if (inBox(tx, ty, DONE_X, DONE_Y, DONE_W, DONE_H)) {
+          saveNameEdit();
+        } else if (inBox(tx, ty, NAME_BACK_X, NAME_BACK_Y, NAME_BACK_W, NAME_BACK_H)) {
+          closeNameEditor();
+        } else {
+          KeyHit keys[KEY_MAX];
+          int count = collectKeys(keys);
+          for (int i = 0; i < count; i++) {
+            if (inBox(tx, ty, keys[i].x, keys[i].y, keys[i].w, keys[i].h)) {
+              applyKey(&keys[i]);
+              break;
+            }
           }
         }
       }

@@ -612,7 +612,7 @@ static NoticeCallbacks noticeCallbacks;
 
 static void startRadio() {
   BLEDevice::init(CLEAR_BLE_NAME);
-  BLEDevice::setMTU(185);
+  BLEDevice::setMTU(CLEAR_BLE_MTU);
   BLEServer *server = BLEDevice::createServer();
   BLEService *service = server->createService(CLEAR_SERVICE_UUID);
   BLECharacteristic *notice = service->createCharacteristic(

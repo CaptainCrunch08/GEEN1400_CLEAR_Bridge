@@ -1,37 +1,34 @@
 # GEEN1400 CLEAR Bridge
 
-CLEAR is a classroom tool for grades K–5. A student picks how they feel, then either tries a short coping step or asks the teacher. The panel tells a separate teacher device by Bluetooth. That device stores the week in its own flash. Plugging it into a computer shows the week as a CSV file, which is imported into the website.
+CLEAR is a classroom support tool for grades K–5. A student enters a name, then chooses whether they have a question, need a break, or need help. The panel sends teacher requests to a separate teacher device over Bluetooth Low Energy (BLE). That device stores the week as a CSV file, which can be imported into the website.
 
 The current student device is an Elecrow CrowPanel 5.0 inch display. The ESP32-S3 is already on that board. `GEEN1400_Teacher` is the teacher device. `GEEN1400_Prototype.ino` is the earlier Arduino Uno version, written for a 16x2 character LCD and the old phone app.
 
 ## What the student sees
 
-The panel opens with a greeting, then **How do you feel?** The first time it is programmed, the greeting is “Hi, Connor.” A teacher can change that name in settings. Give each panel its own name. The teacher device uses that name to tell students apart.
+On first startup, the student types a name and saves it. The greeting previews **Hello, [name]** as they type. The saved name is retained across restarts and included with teacher requests. Give each panel its own name so the teacher can tell students apart.
 
-- Worried
-- Bored
-- I don't get it
-- Mad
-- Uncomfortable
+The main menu has three options:
 
-Each feeling opens a list of responses.
+- **I have a question** opens repeat-question prompts, classroom suggestions, and a custom-message editor.
+- **I need a break** sends a break request to the teacher.
+- **I need help** opens material-help requests, emotion-based support, and a request to talk with the teacher in private.
 
-- **Green / Try this** is something the student can do alone, such as breathing, counting to 10, or a quiet looking game. The next screen gives the steps. The teacher is still told.
-- **Orange / Ask teacher** is a request, such as a short walk, talking with someone, a clearer explanation, or an example. The teacher can answer yes or no. That answer shows along the bottom of the student panel.
+Teacher-directed options have an explicit **Send** button. Question prompts let the student fill in a topic, and custom-message editors allow a message of their choosing. Suggestions and coping steps are shown locally and are not sent. The Uncomfortable screen's notes stay on the panel and are not sent. **Review IEP** is not included.
 
-The bottom of the student screen says **Sent to the teacher** after a tap. An orange request then changes to **Teacher said yes** or **Teacher said no**. A green choice stays on “Sent to the teacher,” because it is not waiting for an answer. If the student picks something else before the answer arrives, the panel shows the new selection. The answer is still stored in the week file.
+Personal-help choices include Distracted, Worried, Upset, Frustrated, and Uncomfortable. Box breathing shows four steps for one complete cycle and asks the student to repeat steps 1–4. Positive self-talk guides the student to notice a thought, consider what they would say to a friend, choose words that are true, fair, and kind, and try a small next step. The COPE option is a neutral placeholder until school-approved steps are provided.
 
-**Back** returns to the previous list. On those screens it sits just left of the settings gear.
+The teacher device logs requests. **Yes** and **No** answer the newest teacher request, and the answer returns to the panel over BLE. **Back** returns to the previous screen.
 
 ## Settings
 
-A gear button in the top right opens settings. It is on the greeting, the feelings list, each response list, and the chosen response. The greeting only stays up for about two seconds, so the reliable place to tap the gear is the feelings list.
+A gear button in the top right of the main menu and submenu screens opens settings.
 
 Settings has three controls:
 
 - **Student name.** **Change** opens a keyboard. **Save** keeps the name, and **Back** leaves it as it was. **Done** then shows the greeting again so the new name can be checked. The first letter of each word is capitalized. The name can be up to 16 characters.
 - **Brightness.** The screen can be set from 20% to 100%, in steps of 10. Use **−**, **+**, or tap the bar. It does not turn all the way off.
-- **Age group.** Four looks are listed: **K**, **1 - 2**, **3 - 4**, and **5**. The green row is the one students see, marked **In use**. K shows a face and one word for each feeling, and only the shortest responses. Grades 1-2 use large letters and the first three responses. Grades 3-4 is the full list of short sentences. Grade 5 uses smaller type and puts the first line of the instructions on each response button. The choice is saved and comes back after a restart.
+- **Age group.** Four looks are listed: **K**, **1 - 2**, **3 - 4**, and **5**. The selection is saved. In the new menus it currently changes text sizing only; it no longer filters the former feelings-response lists.
 
 The name, brightness, and grade choice are stored on the board and come back after a restart. `Preferences.h` is part of the ESP32 board package. Nothing extra needs to be installed for that.
 
@@ -51,7 +48,9 @@ The screen is a Waveshare 2.4 inch LCD, 240 by 320, SPI. The wiring is listed at
 
 The screen opens on the oldest student. **Next** moves to the following one. **Yes** and **No** answer the student on the screen, and that answer shows on the student panel. Green and orange selections are both stored.
 
-The devices use Bluetooth. They do not join the school Wi-Fi, and they do not use a phone.
+The devices use BLE. They do not join the school Wi-Fi, and they do not use a phone.
+
+**Privacy note:** this prototype does not authenticate or encrypt BLE messages. Do not send real student names, feelings, or other sensitive information until BLE pairing/security has been implemented and reviewed for the school environment.
 
 ### Time
 
