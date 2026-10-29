@@ -87,7 +87,7 @@
 <body>
   <main>
     <h1>CLEAR weeks</h1>
-    <p class="lede">Copy <code>clear-log.csv</code> from the teacher microSD card with a card reader, then import it here. Each week stays in this browser. Trends use every week that is still saved. Removing a week here does not erase the card.</p>
+    <p class="lede">Plug the teacher device into this computer and copy <code>CLEAR.CSV</code> from the drive that appears. Each week stays in this browser. Trends use every week that is still saved, including the time of day a student sent each selection. Removing a week here does not erase the device.</p>
 
     <section>
       <h2>Import a week</h2>
@@ -201,6 +201,7 @@
           byId[id] = {
             id: id,
             seconds_on: row.seconds_on || "",
+            time_sent: row.time_sent || "",
             student: row.student || "",
             feeling: row.feeling || "",
             choice: row.choice || "",
@@ -211,6 +212,7 @@
           return;
         }
         if (row.teacher_response) prev.teacher_response = row.teacher_response;
+        if (row.time_sent && !prev.time_sent) prev.time_sent = row.time_sent;
         var a = Number(prev.seconds_on);
         var b = Number(row.seconds_on);
         if (!isNaN(a) && !isNaN(b) && b < a) prev.seconds_on = String(b);
@@ -248,6 +250,62 @@
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;");
+    }
+
+    function eventDate(event) {
+      var n = Number(event.time_sent);
+      if (!event.time_sent || isNaN(n) || n < 1000000000) return null;
+      return new Date(n * 1000);
+    }
+
+    function formatWhen(event) {
+      var when = eventDate(event);
+      if (!when) return "";
+      return when.toLocaleString();
+    }
+
+    function timeOfDayBars(events) {
+      var counts = [];
+      var any = false;
+      for (var hour = 0; hour < 24; hour++) counts[hour] = 0;
+      events.forEach(function (event) {
+        var when = eventDate(event);
+        if (!when) return;
+        any = true;
+        counts[when.getHours()]++;
+      });
+      if (!any) {
+        return "<h3>Time of day</h3><p class='empty'>No send times in the saved weeks yet.</p>";
+      }
+      var items = [];
+      for (var h = 0; h < 24; h++) {
+        if (!counts[h]) continue;
+        var label = (h % 12 || 12) + (h < 12 ? " AM" : " PM");
+        items.push({ label: label, count: counts[h] });
+      }
+      return barList("Time of day", items, false);
+    }
+
+    function dayBars(events) {
+      var counts = {};
+      var order = [];
+      events.forEach(function (event) {
+        var when = eventDate(event);
+        if (!when) return;
+        var key = when.toLocaleDateString();
+        if (!counts[key]) {
+          counts[key] = 0;
+          order.push(key);
+        }
+        counts[key]++;
+      });
+      var items = order.map(function (key) {
+        return { label: key, count: counts[key] };
+      });
+      if (!items.length) {
+        return "<h3>Selections by day</h3><p class='empty'>No send times in the saved weeks yet.</p>";
+      }
+      return barList("Selections by day", items, false);
     }
 
     function allEvents(weeks) {
@@ -306,6 +364,8 @@
       });
       var trends = document.getElementById("trends");
       trends.innerHTML = barList("Selections each week", byWeek, false)
+        + dayBars(events)
+        + timeOfDayBars(events)
         + barList("Feelings", feelings, false)
         + barList("Students", students, false)
         + barList("Try this or ask", kinds, false)
@@ -339,9 +399,9 @@
         return;
       }
       var events = eventsIn(week.rows);
-      var html = "<table><thead><tr><th>Seconds</th><th>Student</th><th>Feeling</th><th>Choice</th><th>Kind</th><th>Teacher</th></tr></thead><tbody>";
+      var html = "<table><thead><tr><th>When</th><th>Student</th><th>Feeling</th><th>Choice</th><th>Kind</th><th>Teacher</th></tr></thead><tbody>";
       events.forEach(function (event) {
-        html += "<tr><td>" + escapeHtml(event.seconds_on) + "</td><td>" + escapeHtml(event.student)
+        html += "<tr><td>" + escapeHtml(formatWhen(event) || event.seconds_on) + "</td><td>" + escapeHtml(event.student)
           + "</td><td>" + escapeHtml(event.feeling) + "</td><td>" + escapeHtml(event.choice)
           + "</td><td>" + escapeHtml(event.kind) + "</td><td>" + escapeHtml(event.teacher_response) + "</td></tr>";
       });

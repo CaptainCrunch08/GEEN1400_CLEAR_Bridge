@@ -12,9 +12,10 @@
   USB-C on the CrowPanel is the program port. If upload sits on
   "Connecting...", hold BOOT, tap RST, and release BOOT.
 
-  A student selection is sent by radio to the teacher device. There is
-  no phone app. The teacher answers Yes or No, and that answer shows
-  along the bottom of this panel.
+  A student selection is sent by Bluetooth to the teacher device. There
+  is no phone app. The teacher answers Yes or No, and that answer shows
+  along the bottom of this panel. The time sent with each selection
+  comes from this panel's clock.
 
   Green buttons are something the student can try.
   Orange buttons ask the teacher. Both are sent, so the teacher knows
@@ -35,10 +36,13 @@
   still there after the panel restarts.
 */
 
-#include <WiFi.h>
-#include <esp_now.h>
-#include <esp_wifi.h>
+#include <BLEDevice.h>
+#include <BLEUtils.h>
+#include <BLEScan.h>
+#include <BLEAdvertisedDevice.h>
 #include <string.h>
+#include <time.h>
+#include <sys/time.h>
 #include <Wire.h>          // I2C bus, used by the touch chip and the small expander
 #include <Preferences.h>   // saves a few settings in flash across restarts
 #include <LovyanGFX.hpp>   // draws text, rectangles, and reads the touch panel
@@ -199,9 +203,9 @@ static const int NAME_BACK_X = DONE_X - 8 - NAME_BACK_W;
 static const int NAME_BACK_Y = 8;
 
 // Layout of the settings page and the name keyboard, in pixels.
-// NAME_MAX is the longest name that fits in the saved setting and
+// STUDENT_NAME_MAX is the longest name that fits in the saved setting and
 // on the greeting line.
-static const int NAME_MAX = 16;
+static const int STUDENT_NAME_MAX = 16;
 static const int NAME_Y = 60;
 static const int NAME_H = 56;
 static const int CHANGE_W = 128;
@@ -403,15 +407,22 @@ static unsigned long screenMs = 0;    // when the greeting was shown
 static unsigned long tapMs = 0;       // when the last accepted tap happened
 static bool touchWasDown = false;     // so one press counts once, not every loop
 static bool nameDirty = false;        // name changed, so Done should show the greeting
-static bool linkReady = false;        // true after the teacher radio starts
-static bool noticeSent = false;       // true after a selection is handed to the radio
+static bool linkReady = false;        // true after Bluetooth starts
+static bool noticeSent = false;       // true after a selection reaches the teacher
+static bool needSend = false;         // a selection is waiting to be sent
 static uint32_t nextEventId = 1;      // counts selections so a reply finds the right one
 static uint32_t waitingId = 0;        // event the panel is waiting on
 static uint8_t teacherReply = CLEAR_ANSWER_NONE;
 static ClearNote pendingReply;
+static ClearNote outboundNote;
 static volatile bool replyReady = false;
-static char studentName[NAME_MAX + 1] = "Connor"; // name on the greeting
-static char nameEdit[NAME_MAX + 1] = "Connor";    // name being typed, not saved yet
+static BLEClient *teacherClient = nullptr;
+static BLERemoteCharacteristic *noticeRemote = nullptr;
+static BLERemoteCharacteristic *replyRemote = nullptr;
+static unsigned long nextBleMs = 0;
+static unsigned long clockMs = 0;
+static char studentName[STUDENT_NAME_MAX + 1] = "Connor"; // name on the greeting
+static char nameEdit[STUDENT_NAME_MAX + 1] = "Connor";    // name being typed, not saved yet
 static int brightnessPct = 80;
 static int gradeLevel = GRADE_LIVE;
 
@@ -446,11 +457,11 @@ static void initExpander() {
 }
 
 // Copy a name into a fixed buffer and always end it with a 0,
-// which is how C marks the end of a string. Stops at NAME_MAX
+// which is how C marks the end of a string. Stops at STUDENT_NAME_MAX
 // so a long saved value cannot write past the array.
 static void copyName(char *dest, const char *src) {
   int i = 0;
-  while (src[i] && i < NAME_MAX) {
+  while (src[i] && i < STUDENT_NAME_MAX) {
     dest[i] = src[i];
     i++;
   }
@@ -491,7 +502,7 @@ static void loadSettings() {
   prefs.end();
 
   int n = 0;
-  for (int i = 0; i < stored.length() && n < NAME_MAX; i++) {
+  for (int i = 0; i < stored.length() && n < STUDENT_NAME_MAX; i++) {
     char c = stored.charAt(i);
     bool letter = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
     bool mark = (c == ' ' || c == '-' || c == '\'');
@@ -560,40 +571,183 @@ static void takeLinkPacket(const uint8_t *data, int len) {
   interrupts();
 }
 
-// ESP32 board packages 2 and 3 name this callback differently.
-#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
-static void onLinkRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
-  (void)info;
-  takeLinkPacket(data, len);
-}
-#else
-static void onLinkRecv(const uint8_t *mac, const uint8_t *data, int len) {
-  (void)mac;
-  takeLinkPacket(data, len);
-}
-#endif
+// Neither board has a clock battery. This panel starts at the time the
+// sketch was uploaded, then saves the time every minute. A reboot
+// continues from the last save. Time while the panel is unplugged is lost.
+static const char *CLOCK_TZ = "MST7MDT,M3.2.0,M11.1.0";
 
-// Start the radio that reaches the teacher device. This is not school
-// Wi-Fi. Both devices stay on channel 1 and send to every listener.
+static time_t compiledLocal() {
+  char month[4] = {0, 0, 0, 0};
+  int day = 1;
+  int year = 2026;
+  int hour = 0;
+  int minute = 0;
+  int second = 0;
+  sscanf(__DATE__, "%3s %d %d", month, &day, &year);
+  sscanf(__TIME__, "%d:%d:%d", &hour, &minute, &second);
+  const char *months = "JanFebMarAprMayJunJulAugSepOctNovDec";
+  int mon = 0;
+  for (int i = 0; i < 12; i++) {
+    if (month[0] == months[i * 3] && month[1] == months[i * 3 + 1] &&
+        month[2] == months[i * 3 + 2]) {
+      mon = i;
+    }
+  }
+  struct tm stamp = {};
+  stamp.tm_year = year - 1900;
+  stamp.tm_mon = mon;
+  stamp.tm_mday = day;
+  stamp.tm_hour = hour;
+  stamp.tm_min = minute;
+  stamp.tm_sec = second;
+  stamp.tm_isdst = -1;
+  return mktime(&stamp);
+}
+
+static void saveClock() {
+  time_t now = time(nullptr);
+  prefs.begin("clear", false);
+  prefs.putUInt("epoch", (uint32_t)now);
+  prefs.end();
+}
+
+static void startClock() {
+  setenv("TZ", CLOCK_TZ, 1);
+  tzset();
+  time_t built = compiledLocal();
+  prefs.begin("clear", true);
+  uint32_t saved = prefs.getUInt("epoch", 0);
+  prefs.end();
+  time_t start = ((time_t)saved > built) ? (time_t)saved : built;
+  struct timeval tv;
+  tv.tv_sec = start;
+  tv.tv_usec = 0;
+  settimeofday(&tv, nullptr);
+  clockMs = millis();
+}
+
+static void onTeacherReply(BLERemoteCharacteristic *characteristic, uint8_t *data, size_t len, bool isNotify) {
+  (void)characteristic;
+  (void)isNotify;
+  takeLinkPacket(data, (int)len);
+}
+
+class TeacherClientCallbacks : public BLEClientCallbacks {
+  void onDisconnect(BLEClient *client) override {
+    (void)client;
+    noticeRemote = nullptr;
+    replyRemote = nullptr;
+  }
+};
+
+static TeacherClientCallbacks teacherClientCallbacks;
+
+static bool connectTeacher() {
+  if (teacherClient != nullptr && teacherClient->isConnected()) {
+    return noticeRemote != nullptr && replyRemote != nullptr;
+  }
+  BLEScan *scan = BLEDevice::getScan();
+  scan->setActiveScan(true);
+  BLEScanResults *results = scan->start(2, false);
+  BLEAdvertisedDevice found;
+  bool haveFound = false;
+  if (results != nullptr) {
+    for (int i = 0; i < results->getCount(); i++) {
+      BLEAdvertisedDevice device = results->getDevice(i);
+      if (device.haveName() && String(device.getName().c_str()) == CLEAR_BLE_NAME) {
+        found = device;
+        haveFound = true;
+        break;
+      }
+    }
+  }
+  scan->clearResults();
+  if (!haveFound) {
+    return false;
+  }
+  if (teacherClient == nullptr) {
+    teacherClient = BLEDevice::createClient();
+    teacherClient->setClientCallbacks(&teacherClientCallbacks);
+  }
+  if (!teacherClient->connect(&found)) {
+    return false;
+  }
+  teacherClient->setMTU(185);
+  BLERemoteService *service = teacherClient->getService(CLEAR_SERVICE_UUID);
+  if (service == nullptr) {
+    teacherClient->disconnect();
+    return false;
+  }
+  noticeRemote = service->getCharacteristic(CLEAR_NOTICE_UUID);
+  replyRemote = service->getCharacteristic(CLEAR_REPLY_UUID);
+  if (noticeRemote == nullptr || replyRemote == nullptr) {
+    teacherClient->disconnect();
+    return false;
+  }
+  if (replyRemote->canNotify()) {
+    replyRemote->registerForNotify(onTeacherReply);
+  }
+  String current = replyRemote->readValue();
+  if (current.length() == sizeof(ClearNote)) {
+    takeLinkPacket((const uint8_t *)current.c_str(), (int)current.length());
+  }
+  return true;
+}
+
+static void sendOutbound() {
+  if (noticeRemote == nullptr) {
+    return;
+  }
+  noticeSent = noticeRemote->writeValue((uint8_t *)&outboundNote, sizeof(outboundNote), true);
+  if (noticeSent) {
+    needSend = false;
+  } else {
+    nextBleMs = millis() + 4000;
+  }
+  if (currentScreen != SCREEN_SETTINGS && currentScreen != SCREEN_NAME) {
+    paintStatus();
+  }
+}
+
+// Look for the teacher device when a selection is waiting, or when a
+// Yes or No has not come back yet. Scanning takes a moment, so it does
+// not run on every pass.
+static void blePump() {
+  if (!linkReady) {
+    return;
+  }
+  bool waitingAnswer = waitingId != 0 && teacherReply == CLEAR_ANSWER_NONE;
+  if (!needSend && !waitingAnswer) {
+    return;
+  }
+  if (teacherClient != nullptr && teacherClient->isConnected() && noticeRemote != nullptr) {
+    if (needSend && millis() >= nextBleMs) {
+      sendOutbound();
+    }
+    return;
+  }
+  if (millis() < nextBleMs) {
+    return;
+  }
+  nextBleMs = millis() + 4000;
+  if (!connectTeacher()) {
+    if (needSend) {
+      noticeSent = false;
+      if (currentScreen != SCREEN_SETTINGS && currentScreen != SCREEN_NAME) {
+        paintStatus();
+      }
+    }
+    return;
+  }
+  if (needSend) {
+    sendOutbound();
+  }
+}
+
 static void startTeacherLink() {
-  WiFi.mode(WIFI_STA);
-  WiFi.setSleep(false);
-  delay(100);
-  esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
-  if (esp_now_init() != ESP_OK) {
-    linkReady = false;
-    return;
-  }
-  esp_now_peer_info_t peer = {};
-  memcpy(peer.peer_addr, clearBroadcast, 6);
-  peer.channel = 0;
-  peer.encrypt = false;
-  peer.ifidx = WIFI_IF_STA;
-  if (esp_now_add_peer(&peer) != ESP_OK) {
-    linkReady = false;
-    return;
-  }
-  esp_now_register_recv_cb(onLinkRecv);
+  startClock();
+  BLEDevice::init("");
+  BLEDevice::setMTU(185);
   linkReady = true;
 }
 
@@ -614,7 +768,7 @@ static void paintStatus() {
   } else if (waitingId != 0) {
     lcd.print("Could not send");
   } else if (!linkReady) {
-    lcd.print("Teacher radio is off");
+    lcd.print("Teacher not found");
   } else {
     lcd.print("Ready");
   }
@@ -842,7 +996,7 @@ static void paintHello() {
   lcd.fillScreen(COL_BG);
   lcd.setTextDatum(textdatum_t::middle_center);
   lcd.setTextColor(COL_FG, COL_BG);
-  char greeting[NAME_MAX + 8];
+  char greeting[STUDENT_NAME_MAX + 8];
   snprintf(greeting, sizeof(greeting), "Hi, %s", studentName);
   if (gradeLevel == GRADE_5) {
     lcd.setFont(&fonts::Font2);
@@ -1251,7 +1405,7 @@ static void applyKey(const KeyHit *key) {
     nameEdit[0] = 0;
   } else if (key->action == KEY_CHAR || key->action == KEY_SPACE) {
     char c = (key->action == KEY_SPACE) ? ' ' : key->ch;
-    if (n >= NAME_MAX) {
+    if (n >= STUDENT_NAME_MAX) {
       return;
     }
     if ((c == ' ' || c == '-' || c == '\'') && (n == 0 || nameEdit[n - 1] == c)) {
@@ -1322,12 +1476,14 @@ static void notifyTeacher() {
   teacherReply = CLEAR_ANSWER_NONE;
   noticeSent = false;
   // Full words go in the log, even when K is showing a shorter word.
+  note.timeSent = (uint32_t)time(nullptr);
   copyField(note.student, sizeof(note.student), studentName);
   copyField(note.feeling, sizeof(note.feeling), menu[selectedMenu]);
   copyField(note.choice, sizeof(note.choice), choice->label);
-  if (linkReady) {
-    noticeSent = esp_now_send(clearBroadcast, (uint8_t *)&note, sizeof(note)) == ESP_OK;
-  }
+  outboundNote = note;
+  needSend = true;
+  nextBleMs = 0;
+  saveClock();
 }
 
 // Open the detail page for response number index in the current list.
@@ -1478,6 +1634,12 @@ void setup() {
 // Repeats forever. Each pass checks for a teacher answer, maybe
 // advances the greeting, then handles at most one new finger tap.
 void loop() {
+  if (millis() - clockMs >= 60000) {
+    clockMs = millis();
+    saveClock();
+  }
+  blePump();
+
   // A Yes or No can arrive while a finger is down. Apply it here, then
   // refresh the footer. Settings and the keyboard have no footer.
   if (replyReady) {

@@ -1,6 +1,6 @@
 # GEEN1400 CLEAR Bridge
 
-CLEAR is a classroom tool for grades K–5. A student picks how they feel, then either tries a short coping step or asks the teacher. The panel tells a separate teacher device by radio. That device stores the week on a microSD card. At the end of the week the file is copied onto a computer and imported into the website.
+CLEAR is a classroom tool for grades K–5. A student picks how they feel, then either tries a short coping step or asks the teacher. The panel tells a separate teacher device by Bluetooth. That device stores the week in its own flash. Plugging it into a computer shows the week as a CSV file, which is imported into the website.
 
 The current student device is an Elecrow CrowPanel 5.0 inch display. The ESP32-S3 is already on that board. `GEEN1400_Teacher` is the teacher device. `GEEN1400_Prototype.ino` is the earlier Arduino Uno version, written for a 16x2 character LCD and the old phone app.
 
@@ -37,31 +37,39 @@ The name, brightness, and grade choice are stored on the board and come back aft
 
 ## Teacher device
 
-Open `GEEN1400_Teacher/GEEN1400_Teacher.ino`. Pick the ESP32 board that matches the mini you bought.
+Open `GEEN1400_Teacher/GEEN1400_Teacher.ino`.
 
-The sketch is a framework. The radio, the microSD log, and the buttons work. The 2.5 inch screen is not chosen yet, so `displayBegin`, `displayShow`, and `displayStatus` print to the Serial Monitor at 115200. Those three functions are the place to add the real screen. The pin numbers at the top of the sketch have to match the wires.
+Board settings:
 
-Both devices use radio channel 1. They do not join the school Wi-Fi, and they do not use a phone. Several student panels can talk to one teacher device.
+- Board: XIAO_ESP32S3
+- PSRAM: OPI PSRAM
+- USB CDC On Boot: Enabled
+- USB Mode: USB-OTG (TinyUSB)
+- Partition Scheme: Default with spiffs
 
-Every selection is shown and added to the log. **Yes** and **No** answer the newest orange request and send that answer back. Another press answers the one before it. Green choices are logged, and they do not use Yes or No.
+The screen is a Waveshare 2.4 inch LCD, 240 by 320, SPI. The wiring is listed at the top of the sketch. The Sense board's microSD pins are left alone. Three buttons connect to ground: **Yes**, **No**, and **Next**.
 
-The teacher device has no clock chip. The time column is seconds since that device was turned on. It starts over at the next power-on. The website does not need a clock. Naming the file at import is what marks the week.
+The screen opens on the oldest student. **Next** moves to the following one. **Yes** and **No** answer the student on the screen, and that answer shows on the student panel. Green and orange selections are both stored.
+
+The devices use Bluetooth. They do not join the school Wi-Fi, and they do not use a phone.
+
+### Time
+
+Neither ESP32 has a battery-backed clock. The student panel sets its clock from the time the sketch was uploaded, saves that clock every minute, and sends it with each selection. After a reboot it continues from the last save. Time while a panel is unplugged is skipped. The teacher screen shows that time in US Mountain time. The CSV stores the same moment as a UTC number, and the website shows it in the computer's local time.
 
 ### Getting the week onto a computer
 
-The file on the card is `clear-log.csv`. Turn the teacher device off, take the microSD card out, and put it in a USB card reader. The ESP32 USB port programs the board. It does not show up as a drive. Copying the file leaves it on the card.
+Plug the teacher device's USB-C port into the computer. A drive appears with `CLEAR.CSV`. Copy that file. Copying does not erase the week. Unplug the device when you are done.
 
-Columns: `id`, `seconds_on`, `student`, `feeling`, `choice`, `kind`, `teacher_response`. `kind` is `ask` or `try`. `teacher_response` is empty until the teacher presses Yes or No, and then a later line for the same `id` says `yes` or `no`.
+Columns: `id`, `time_sent`, `student`, `feeling`, `choice`, `kind`, `teacher_response`. `time_sent` is seconds since 1970 UTC. `kind` is `ask` or `try`. `teacher_response` is empty until the teacher presses Yes or No, and then a later line for the same `id` says `yes` or `no`.
 
 ### Erasing the week
 
-**Clear** is its own button, not Yes or No. Press **Clear**, then press **Yes** within 8 seconds. The log is replaced with a file that has only the column names, and the screen says the week was cleared. **No** cancels.
-
-Deleting `clear-log.csv` on the computer does the same job. The next time the teacher device starts, it creates a new file with only the column names.
+Delete `CLEAR.CSV` on the computer, then unplug the teacher device. It starts a new file that has only the column names.
 
 ## Website
 
-Open `website/index.html` in a browser. Choose the CSV, name the week, and save it. Each week stays in that browser. Saving another week does not replace the earlier ones unless it is given the same name. Trends cover feelings, students, try versus ask, teacher answers, and how many selections each week had.
+Open `website/index.html` in a browser. Choose the CSV, name the week, and save it. Each week stays in that browser. Saving another week does not replace the earlier ones unless it is given the same name. Trends cover feelings, students, try versus ask, teacher answers, selections by day, and time of day.
 
 The saved weeks live in that browser on that computer. Another computer does not have them until the same CSV files are imported there. Removing a week on the site only removes it from the browser. A shared server can come later.
 
@@ -82,7 +90,7 @@ Libraries, from the Arduino Library Manager:
 
 - LovyanGFX 1.2 or later. The sketch includes the RGB panel headers directly, because that version does not expose them from `LovyanGFX.hpp`.
 
-`WiFi.h`, `Wire.h`, and `Preferences.h` come with the ESP32 board package. Install **esp32 by Espressif Systems** from the Boards Manager. The teacher sketch uses the SD and ESP-NOW pieces of that same package. It does not need LovyanGFX. `CLEAR_Link.h` is copied in both sketch folders. If that radio message changes, change both copies the same way.
+`Wire.h`, `Preferences.h`, and the Bluetooth and USB pieces come with the ESP32 board package. Install **esp32 by Espressif Systems** from the Boards Manager. The teacher sketch also uses LovyanGFX for the 2.4 inch screen. `CLEAR_Link.h` is copied in both sketch folders. If that message changes, change both copies the same way.
 
 Program the board through the USB-C port on the display. The CrowPanel uses a CH340 USB chip. If no COM port appears, install the WCH CH340 driver and use a USB cable that carries data, not a charge-only cable. In Device Manager the port should show as **USB-SERIAL CH340 (COMx)**. If upload stays on “Connecting…”, hold **BOOT**, tap **RST**, and release **BOOT**.
 
