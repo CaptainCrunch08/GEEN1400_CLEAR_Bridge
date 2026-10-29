@@ -6,32 +6,30 @@ The current student device is an Elecrow CrowPanel 5.0 inch display. The ESP32-S
 
 ## What the student sees
 
-The panel opens with a greeting, then **How do you feel?** The first time it is programmed, the greeting is “Hi, Connor.” A teacher can change that name in settings. Give each panel its own name. The teacher device uses that name to tell students apart.
+The panel opens with **Hello** and the student name, then **What do you need?** The first time it is programmed, the greeting is “Hello, Connor.” A teacher can change that name in settings. Give each panel its own name. The teacher device uses that name to tell students apart.
 
-- Worried
-- Bored
-- I don't get it
-- Mad
-- Uncomfortable
+- I have a question
+- I need a break
+- I need help
 
-Each feeling opens a list of responses.
+**I need help** opens help with the work, personal help, or talking in private. Personal help opens Distracted, Worried, Upset, Frustrated, and Uncomfortable. Each of those has a custom message.
 
-- **Green / Try this** is something the student can do alone, such as breathing, counting to 10, or a quiet looking game. The next screen gives the steps. The teacher is still told.
-- **Orange / Ask teacher** is a request, such as a short walk, talking with someone, a clearer explanation, or an example. The teacher can answer yes or no. That answer shows along the bottom of the student panel.
+- **Green / Try this** is something the student can do on the panel, such as box breathing, positive self-talk, or the COPE steps. The teacher is told. Box breathing sends when it is opened. **Begin** then counts 4, 3, 2, 1 through breathe in, hold, breathe out, and hold.
+- **Orange / Ask** is a request, such as a break, a walk, a repeated question, or a typed message. A typed message is sent when the student presses **Send**. The teacher can answer yes or no. That answer shows along the bottom of the student panel.
 
-The bottom of the student screen says **Sent to the teacher** after a tap. An orange request then changes to **Teacher said yes** or **Teacher said no**. A green choice stays on “Sent to the teacher,” because it is not waiting for an answer. If the student picks something else before the answer arrives, the panel shows the new selection. The answer is still stored in the week file.
+Opening a list does not send a notice. The bottom of the student screen says **Sent to the teacher** after a real choice. An answer changes that line to **Teacher said yes** or **Teacher said no**. If the student picks something else before the answer arrives, the panel shows the new selection. The answer is still stored in the week file. A typed message is shortened to 39 characters, which is what the teacher note can hold.
 
 **Back** returns to the previous list. On those screens it sits just left of the settings gear.
 
 ## Settings
 
-A gear button in the top right opens settings. It is on the greeting, the feelings list, each response list, and the chosen response. The greeting only stays up for about two seconds, so the reliable place to tap the gear is the feelings list.
+A gear button in the top right opens settings. It is on the greeting, each choice list, and the chosen response. The greeting only stays up for about two seconds, so the reliable place to tap the gear is a choice list.
 
 Settings has three controls:
 
 - **Student name.** **Change** opens a keyboard. **Save** keeps the name, and **Back** leaves it as it was. **Done** then shows the greeting again so the new name can be checked. The first letter of each word is capitalized. The name can be up to 16 characters.
 - **Brightness.** The screen can be set from 20% to 100%, in steps of 10. Use **−**, **+**, or tap the bar. It does not turn all the way off.
-- **Age group.** Four looks are listed: **K**, **1 - 2**, **3 - 4**, and **5**. The green row is the one students see, marked **In use**. K shows a face and one word for each feeling, and only the shortest responses. Grades 1-2 use large letters and the first three responses. Grades 3-4 is the full list of short sentences. Grade 5 uses smaller type and puts the first line of the instructions on each response button. The choice is saved and comes back after a restart.
+- **Age group.** Four looks are listed: **K**, **1 - 2**, **3 - 4**, and **5**. The green row is the one students see, marked **In use**. K uses the biggest letters, a short word, and a small picture on each button. Grades 1-2 use big letters and the same pictures, with the full words. The three choices on the first page fill the space under the title. Grade 5 uses smaller type. Every grade sees the same choices. The teacher still receives the full words. The choice is saved and comes back after a restart.
 
 The name, brightness, and grade choice are stored on the board and come back after a restart. `Preferences.h` is part of the ESP32 board package. Nothing extra needs to be installed for that.
 
