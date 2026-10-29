@@ -86,9 +86,31 @@ static const char *LOG_HEADER =
 
 static const int LIST_MAX = 12;
 static const int RING_MAX = 8;
+static const int DRAWING_RING_MAX = 16;
 static const unsigned long BUTTON_GAP_MS = 200;
-static const uint32_t DISK_SECTORS = 256;
+static const uint32_t DISK_SECTORS = 8192;
 static const uint32_t DISK_BYTES = DISK_SECTORS * 512;
+static const uint16_t DISK_FAT_SECTORS = 6;
+static const uint16_t DISK_ROOT_ENTRIES = 128;
+static const uint16_t DISK_ROOT_SECTORS = DISK_ROOT_ENTRIES / 16;
+static const uint16_t DISK_SECTORS_PER_CLUSTER = 4;
+static const uint16_t DISK_DATA_START_SECTOR =
+  1 + DISK_FAT_SECTORS + DISK_ROOT_SECTORS;
+static const uint16_t DISK_CLUSTER_BYTES = DISK_SECTORS_PER_CLUSTER * 512;
+static const uint16_t DISK_MAX_FILES = DISK_ROOT_ENTRIES;
+static const size_t DRAWING_MAX_BYTES = 300000;
+
+struct DrawingPacketEntry {
+  uint8_t bytes[sizeof(ClearDrawingChunk)];
+  uint8_t length;
+};
+
+struct DiskFileEntry {
+  char path[48];
+  char shortName[11];
+  uint32_t size;
+  uint16_t firstCluster;
+};
 
 // US Mountain time, so the small screen matches a Colorado classroom.
 // The file itself stores UTC. The website uses the computer's time zone.
@@ -143,6 +165,20 @@ static ClearNote waiting[LIST_MAX];
 static ClearNote noticeRing[RING_MAX];
 static volatile uint8_t ringWrite = 0;
 static uint8_t ringRead = 0;
+static DrawingPacketEntry drawingRing[DRAWING_RING_MAX];
+static volatile uint8_t drawingRingWrite = 0;
+static uint8_t drawingRingRead = 0;
+static volatile bool drawingQueueOverflow = false;
+static volatile uint32_t drawingOverflowId = 0;
+static uint32_t activeDrawingId = 0;
+static uint32_t activeDrawingBytes = 0;
+static uint32_t activeDrawingReceived = 0;
+static uint16_t activeDrawingChunkIndex = 0;
+static File activeDrawingFile;
+static char activeDrawingTempPath[40] = "";
+static char activeDrawingPath[40] = "";
+static DiskFileEntry diskFiles[DISK_MAX_FILES];
+static uint16_t diskFileCount = 0;
 static unsigned long buttonMs = 0;
 static bool yesWasDown = false;
 static bool noWasDown = false;
@@ -401,11 +437,80 @@ static void fat12Set(uint8_t *fat, int cluster, uint16_t value) {
   }
 }
 
-static void refreshDisk() {
+static bool addDiskFile(const char *path, const char shortName[11],
+                        uint8_t *fat, uint8_t *root,
+                        uint16_t *nextCluster) {
+  if (diskFileCount >= DISK_MAX_FILES) {
+    return false;
+  }
+  File file = SPIFFS.open(path, FILE_READ);
+  if (!file) {
+    return false;
+  }
+  uint32_t size = file.size();
+  uint16_t clusters = (size + DISK_CLUSTER_BYTES - 1) / DISK_CLUSTER_BYTES;
+  if (clusters == 0) {
+    clusters = 1;
+  }
+  uint16_t maxCluster = (DISK_SECTORS - DISK_DATA_START_SECTOR) /
+                        DISK_SECTORS_PER_CLUSTER + 1;
+  if ((uint32_t)*nextCluster + clusters - 1 > maxCluster) {
+    file.close();
+    return false;
+  }
+
+  uint16_t firstCluster = *nextCluster;
+  uint32_t remaining = size;
+  for (uint16_t i = 0; i < clusters; i++) {
+    uint16_t cluster = firstCluster + i;
+    uint16_t next = (i + 1 == clusters) ? 0xFFF : cluster + 1;
+    fat12Set(fat, cluster, next);
+    uint32_t offset = (DISK_DATA_START_SECTOR +
+                       (uint32_t)(cluster - 2) * DISK_SECTORS_PER_CLUSTER) * 512;
+    uint32_t count = remaining < DISK_CLUSTER_BYTES
+                       ? remaining : DISK_CLUSTER_BYTES;
+    if (count > 0 && file.read(disk + offset, count) != count) {
+      file.close();
+      return false;
+    }
+    remaining -= count;
+  }
+  file.close();
+
+  DiskFileEntry &entry = diskFiles[diskFileCount];
+  copyField(entry.path, sizeof(entry.path), path);
+  memcpy(entry.shortName, shortName, sizeof(entry.shortName));
+  entry.size = size;
+  entry.firstCluster = firstCluster;
+  *nextCluster += clusters;
+
+  uint8_t *directoryEntry = root + diskFileCount * 32;
+  memcpy(directoryEntry, shortName, 11);
+  directoryEntry[11] = 0x20;
+  directoryEntry[26] = firstCluster & 0xFF;
+  directoryEntry[27] = (firstCluster >> 8) & 0xFF;
+  directoryEntry[28] = size & 0xFF;
+  directoryEntry[29] = (size >> 8) & 0xFF;
+  directoryEntry[30] = (size >> 16) & 0xFF;
+  directoryEntry[31] = (size >> 24) & 0xFF;
+  diskFileCount++;
+  return true;
+}
+
+static bool isDrawingSvg(const char *path) {
+  if (path == nullptr || strncmp(path, "/draw-", 6) != 0) {
+    return false;
+  }
+  size_t length = strlen(path);
+  return length > 4 && strcmp(path + length - 4, ".svg") == 0;
+}
+
+static bool refreshDisk() {
   if (disk == nullptr || !storageOk) {
-    return;
+    return false;
   }
   memset(disk, 0, DISK_BYTES);
+  diskFileCount = 0;
   uint8_t *boot = disk;
   boot[0] = 0xEB;
   boot[1] = 0x3C;
@@ -413,14 +518,15 @@ static void refreshDisk() {
   memcpy(boot + 3, "MSDOS5.0", 8);
   boot[11] = 0x00;
   boot[12] = 0x02;
-  boot[13] = 1;
+  boot[13] = DISK_SECTORS_PER_CLUSTER;
   boot[14] = 1;
   boot[16] = 1;
-  boot[17] = 16;
+  boot[17] = DISK_ROOT_ENTRIES & 0xFF;
+  boot[18] = (DISK_ROOT_ENTRIES >> 8) & 0xFF;
   boot[19] = DISK_SECTORS & 0xFF;
   boot[20] = (DISK_SECTORS >> 8) & 0xFF;
   boot[21] = 0xF8;
-  boot[22] = 1;
+  boot[22] = DISK_FAT_SECTORS;
   boot[24] = 1;
   boot[26] = 1;
   boot[38] = 0x29;
@@ -431,45 +537,53 @@ static void refreshDisk() {
   boot[510] = 0x55;
   boot[511] = 0xAA;
 
-  fat12Set(disk + 512, 0, 0xFF8);
-  fat12Set(disk + 512, 1, 0xFFF);
-
-  File file = SPIFFS.open(LOG_PATH, FILE_READ);
-  uint32_t size = file ? file.size() : 0;
-  uint32_t maxData = (DISK_SECTORS - 3) * 512;
-  if (size > maxData) {
-    size = maxData;
-  }
-  uint32_t clusters = (size + 511) / 512;
-  if (clusters < 1) {
-    clusters = 1;
-  }
-  for (uint32_t c = 0; c < clusters; c++) {
-    uint16_t next = (c + 1 == clusters) ? 0xFFF : (uint16_t)(c + 3);
-    fat12Set(disk + 512, (int)(c + 2), next);
+  uint8_t *fat = disk + 512;
+  uint8_t *dir = disk + (1 + DISK_FAT_SECTORS) * 512;
+  fat12Set(fat, 0, 0xFF8);
+  fat12Set(fat, 1, 0xFFF);
+  uint16_t nextCluster = 2;
+  static const char logName[11] = {
+    'C', 'L', 'E', 'A', 'R', ' ', ' ', ' ', 'C', 'S', 'V'
+  };
+  if (!addDiskFile(LOG_PATH, logName, fat, dir, &nextCluster)) {
+    return false;
   }
 
-  uint8_t *dir = disk + 2 * 512;
-  memcpy(dir, "CLEAR   ", 8);
-  memcpy(dir + 8, "CSV", 3);
-  dir[11] = 0x20;
-  dir[26] = 2;
-  if (file) {
-    file.read(disk + 3 * 512, size);
+  File root = SPIFFS.open("/");
+  if (!root) {
+    return false;
+  }
+  uint16_t drawingNumber = 1;
+  while (File file = root.openNextFile()) {
+    const char *path = file.name();
+    bool drawing = isDrawingSvg(path);
+    char drawingPath[48];
+    copyField(drawingPath, sizeof(drawingPath), path);
     file.close();
+    if (!drawing) {
+      continue;
+    }
+    char shortName[11];
+    memset(shortName, ' ', sizeof(shortName));
+    char baseName[9];
+    snprintf(baseName, sizeof(baseName), "DRAW%04u", drawingNumber++);
+    memcpy(shortName, baseName, 8);
+    memcpy(shortName + 8, "SVG", 3);
+    if (!addDiskFile(drawingPath, shortName, fat, dir, &nextCluster)) {
+      root.close();
+      return false;
+    }
   }
-  dir[28] = size & 0xFF;
-  dir[29] = (size >> 8) & 0xFF;
-  dir[30] = (size >> 16) & 0xFF;
-  dir[31] = (size >> 24) & 0xFF;
+  root.close();
+  return true;
 }
 
 static bool diskHasLog() {
   if (disk == nullptr) {
     return false;
   }
-  uint8_t *dir = disk + 2 * 512;
-  for (int i = 0; i < 16; i++) {
+  uint8_t *dir = disk + (1 + DISK_FAT_SECTORS) * 512;
+  for (int i = 0; i < DISK_ROOT_ENTRIES; i++) {
     uint8_t *entry = dir + i * 32;
     if (entry[0] == 0x00) {
       break;
@@ -580,6 +694,26 @@ static void remember(const ClearNote *note) {
 }
 
 static void takeNotice(const uint8_t *data, int len) {
+  if (len >= 2 && data[0] == CLEAR_LINK_VERSION &&
+      data[1] >= CLEAR_KIND_DRAWING_START &&
+      data[1] <= CLEAR_KIND_DRAWING_END &&
+      len <= (int)sizeof(ClearDrawingChunk)) {
+    uint8_t next = (drawingRingWrite + 1) % DRAWING_RING_MAX;
+    if (next == drawingRingRead) {
+      if (len >= (int)offsetof(ClearDrawingStart, student)) {
+        uint32_t overflowId = 0;
+        memcpy(&overflowId, data + offsetof(ClearDrawingStart, drawingId),
+               sizeof(overflowId));
+        drawingOverflowId = overflowId;
+      }
+      drawingQueueOverflow = true;
+      return;
+    }
+    memcpy(drawingRing[drawingRingWrite].bytes, data, len);
+    drawingRing[drawingRingWrite].length = len;
+    drawingRingWrite = next;
+    return;
+  }
   if (len != (int)sizeof(ClearNote)) {
     return;
   }
@@ -601,10 +735,11 @@ static void takeNotice(const uint8_t *data, int len) {
 
 class NoticeCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *characteristic) override {
-    if (characteristic->getValue().length() != sizeof(ClearNote)) {
+    size_t length = characteristic->getValue().length();
+    if (length > sizeof(ClearDrawingChunk)) {
       return;
     }
-    takeNotice(characteristic->getData(), sizeof(ClearNote));
+    takeNotice(characteristic->getData(), length);
   }
 };
 
@@ -612,7 +747,7 @@ static NoticeCallbacks noticeCallbacks;
 
 static void startRadio() {
   BLEDevice::init(CLEAR_BLE_NAME);
-  BLEDevice::setMTU(185);
+  BLEDevice::setMTU(CLEAR_BLE_MTU);
   BLEServer *server = BLEDevice::createServer();
   BLEService *service = server->createService(CLEAR_SERVICE_UUID);
   BLECharacteristic *notice = service->createCharacteristic(
@@ -626,6 +761,146 @@ static void startRadio() {
   BLEAdvertising *advertising = BLEDevice::getAdvertising();
   advertising->addServiceUUID(CLEAR_SERVICE_UUID);
   advertising->start();
+}
+
+static void sendDrawingResult(uint32_t drawingId, bool saved) {
+  if (replyChar == nullptr) {
+    return;
+  }
+  ClearDrawingResult result = {};
+  result.version = CLEAR_LINK_VERSION;
+  result.kind = CLEAR_KIND_DRAWING_RESULT;
+  result.drawingId = drawingId;
+  result.saved = saved ? 1 : 0;
+  replyChar->setValue((uint8_t *)&result, sizeof(result));
+  replyChar->notify();
+}
+
+static void closeActiveDrawing(bool removePartial) {
+  if (activeDrawingFile) {
+    activeDrawingFile.close();
+  }
+  if (removePartial && activeDrawingTempPath[0]) {
+    SPIFFS.remove(activeDrawingTempPath);
+  }
+  activeDrawingId = 0;
+  activeDrawingBytes = 0;
+  activeDrawingReceived = 0;
+  activeDrawingChunkIndex = 0;
+  activeDrawingTempPath[0] = 0;
+  activeDrawingPath[0] = 0;
+}
+
+static void beginDrawingTransfer(const ClearDrawingStart *packet) {
+  closeActiveDrawing(true);
+  if (!storageOk || packet->board > 2 || packet->totalBytes == 0 ||
+      packet->totalBytes > DRAWING_MAX_BYTES) {
+    sendDrawingResult(packet->drawingId, false);
+    return;
+  }
+  snprintf(activeDrawingPath, sizeof(activeDrawingPath),
+           "/draw-%08lX.svg", (unsigned long)packet->drawingId);
+  snprintf(activeDrawingTempPath, sizeof(activeDrawingTempPath),
+           "/draw-%08lX.part", (unsigned long)packet->drawingId);
+  SPIFFS.remove(activeDrawingTempPath);
+  activeDrawingFile = SPIFFS.open(activeDrawingTempPath, FILE_WRITE);
+  if (!activeDrawingFile) {
+    closeActiveDrawing(false);
+    sendDrawingResult(packet->drawingId, false);
+    return;
+  }
+  activeDrawingId = packet->drawingId;
+  activeDrawingBytes = packet->totalBytes;
+  activeDrawingReceived = 0;
+  activeDrawingChunkIndex = 0;
+}
+
+static void handleDrawingPacket(const uint8_t *data, uint8_t length) {
+  if (length < 2 || data[0] != CLEAR_LINK_VERSION) {
+    return;
+  }
+  if (data[1] == CLEAR_KIND_DRAWING_START &&
+      length == sizeof(ClearDrawingStart)) {
+    ClearDrawingStart packet;
+    memcpy(&packet, data, sizeof(packet));
+    beginDrawingTransfer(&packet);
+    return;
+  }
+  if (data[1] == CLEAR_KIND_DRAWING_CHUNK &&
+      length >= offsetof(ClearDrawingChunk, payload)) {
+    ClearDrawingChunk packet = {};
+    memcpy(&packet, data, length);
+    if (activeDrawingId != packet.drawingId ||
+        packet.chunkIndex != activeDrawingChunkIndex ||
+        packet.payloadSize > CLEAR_DRAWING_CHUNK_SIZE ||
+        length != offsetof(ClearDrawingChunk, payload) + packet.payloadSize ||
+        activeDrawingReceived + packet.payloadSize > activeDrawingBytes) {
+      closeActiveDrawing(true);
+      sendDrawingResult(packet.drawingId, false);
+      return;
+    }
+    size_t written = activeDrawingFile.write(packet.payload, packet.payloadSize);
+    if (written != packet.payloadSize) {
+      uint32_t failedId = activeDrawingId;
+      closeActiveDrawing(true);
+      sendDrawingResult(failedId, false);
+      return;
+    }
+    activeDrawingReceived += written;
+    activeDrawingChunkIndex++;
+    return;
+  }
+  if (data[1] == CLEAR_KIND_DRAWING_END &&
+      length == sizeof(ClearDrawingEnd)) {
+    ClearDrawingEnd packet;
+    memcpy(&packet, data, sizeof(packet));
+    bool complete = activeDrawingId == packet.drawingId &&
+                    activeDrawingReceived == activeDrawingBytes;
+    uint32_t finishedId = packet.drawingId;
+    if (activeDrawingFile) {
+      activeDrawingFile.flush();
+      activeDrawingFile.close();
+    }
+    char backupPath[40];
+    snprintf(backupPath, sizeof(backupPath),
+             "/draw-%08lX.bak", (unsigned long)finishedId);
+    bool hadPrevious = complete && SPIFFS.exists(activeDrawingPath);
+    if (hadPrevious) {
+      SPIFFS.remove(backupPath);
+      complete = SPIFFS.rename(activeDrawingPath, backupPath);
+    }
+    if (complete) {
+      complete = SPIFFS.rename(activeDrawingTempPath, activeDrawingPath);
+    }
+    if (!complete) {
+      SPIFFS.remove(activeDrawingTempPath);
+      if (hadPrevious) {
+        SPIFFS.rename(backupPath, activeDrawingPath);
+      }
+    } else if (hadPrevious) {
+      SPIFFS.remove(backupPath);
+    }
+    closeActiveDrawing(false);
+    sendDrawingResult(finishedId, complete);
+  }
+}
+
+static void drainDrawingPackets() {
+  if (drawingQueueOverflow) {
+    noInterrupts();
+    uint32_t overflowId = drawingOverflowId;
+    drawingOverflowId = 0;
+    drawingQueueOverflow = false;
+    interrupts();
+    if (overflowId != 0) {
+      sendDrawingResult(overflowId, false);
+    }
+  }
+  while (drawingRingRead != drawingRingWrite) {
+    DrawingPacketEntry packet = drawingRing[drawingRingRead];
+    drawingRingRead = (drawingRingRead + 1) % DRAWING_RING_MAX;
+    handleDrawingPacket(packet.bytes, packet.length);
+  }
 }
 
 static void sendReply(ClearNote note, uint8_t answer) {
@@ -680,6 +955,7 @@ static void drainNotices() {
     remember(&note);
     paintScreen();
   }
+  drainDrawingPackets();
 }
 
 void setup() {

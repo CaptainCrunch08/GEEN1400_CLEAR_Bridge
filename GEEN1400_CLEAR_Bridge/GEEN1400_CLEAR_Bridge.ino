@@ -45,8 +45,10 @@
 #include <string.h>
 #include <time.h>
 #include <sys/time.h>
+#include <SPIFFS.h>
 #include <Wire.h>          // I2C bus, used by the touch chip and the small expander
 #include <Preferences.h>   // saves a few settings in flash across restarts
+#include <esp_system.h>
 #include <LovyanGFX.hpp>   // draws text, rectangles, and reads the touch panel
 #include <lgfx/v1/platforms/esp32s3/Panel_RGB.hpp>
 #include <lgfx/v1/platforms/esp32s3/Bus_RGB.hpp>
@@ -176,6 +178,60 @@ static const int SCREEN_SELECTED = 3;   // steps, or the breathing count
 static const int SCREEN_SETTINGS = 4;   // name, brightness, grade
 static const int SCREEN_NAME = 5;       // keyboard for a name or a message
 static const int SCREEN_WRITE = 6;      // three lines for "how I feel"
+static const int SCREEN_DRAW_MENU = 7;  // choose a drawing surface
+static const int SCREEN_DRAW_CANVAS = 8; // draw on the selected surface
+
+static const int DRAW_HEADER_H = 108;
+static const int DRAW_CANVAS_BOTTOM = 420;
+static const int DRAW_BACK_X = 8;
+static const int DRAW_BACK_Y = 8;
+static const int DRAW_BACK_W = 82;
+static const int DRAW_BACK_H = 44;
+static const int DRAW_SAVE_X = 98;
+static const int DRAW_RESET_X = 192;
+static const int DRAW_NEW_X = 310;
+static const int DRAW_BUTTON_Y = 8;
+static const int DRAW_BUTTON_H = 44;
+static const int DRAW_COLOR_Y = 58;
+static const int DRAW_COLOR_W = 64;
+static const int DRAW_COLOR_H = 36;
+static const int DRAW_COLOR_X[] = {504, 572, 640, 708};
+static const int DRAW_COLOR_COUNT = 4;
+static const uint16_t DRAW_CHALK_COLORS[DRAW_COLOR_COUNT] = {
+  0xFD20, 0xFFFF, 0x001F, 0x07E0
+};
+static const char *DRAW_CHALK_NAMES[DRAW_COLOR_COUNT] = {
+  "Orange", "White", "Blue", "Green"
+};
+static const uint32_t DRAW_FILE_MAGIC = 0x434C4452;
+static const uint8_t DRAW_FILE_VERSION = 1;
+static const int DRAW_SEGMENT_MAX = 2400;
+static const unsigned long DRAW_WARNING_MS = 120000;
+
+static const int BOARD_GRAPH = 0;
+static const int BOARD_WHITE = 1;
+static const int BOARD_CHALK = 2;
+
+#pragma pack(push, 1)
+struct DrawingFileHeader {
+  uint32_t magic;
+  uint32_t drawingId;
+  uint32_t savedAt;
+  uint16_t segmentCount;
+  uint8_t version;
+  uint8_t board;
+  uint8_t chalkColor;
+};
+
+struct DrawingSegment {
+  uint16_t x1;
+  uint16_t y1;
+  uint16_t x2;
+  uint16_t y2;
+  uint16_t color;
+  uint8_t width;
+};
+#pragma pack(pop)
 
 // Positions are pixels. x grows to the right, y grows downward.
 // (0, 0) is the top-left corner. The screen is 800 by 480.
@@ -320,6 +376,7 @@ static const uint8_t ACT_ASK = 2;
 static const uint8_t ACT_TYPE = 3;
 static const uint8_t ACT_BREATHE = 4;
 static const uint8_t ACT_WRITE = 5;
+static const uint8_t ACT_DRAWING = 6;
 
 // One button. label is the full words the teacher receives.
 // little is the short word K sees. lead is added in front of
@@ -402,9 +459,10 @@ static const Item helpKids[] = {
 static const Item mainItems[] = {
   {"I have a question", "Question", nullptr, "Ask", ACT_OPEN, nullptr, questionKids, 6},
   {"I need a break", "Break", ASK_HELP, "Break", ACT_ASK, nullptr, nullptr, 0},
-  {"I need help", "Help", nullptr, "Help", ACT_OPEN, nullptr, helpKids, 3}
+  {"I need help", "Help", nullptr, "Help", ACT_OPEN, nullptr, helpKids, 3},
+  {"Drawing Board", "Drawing Board", nullptr, "Draw", ACT_DRAWING, nullptr, nullptr, 0}
 };
-static const int MAIN_COUNT = 3;
+static const int MAIN_COUNT = 4;
 
 // =============================================================================
 // =============================================================================
@@ -473,6 +531,36 @@ static int writeSlot = 0;
 static int typeMode = TYPE_NAME;
 static int brightnessPct = 80;
 static int gradeLevel = GRADE_LIVE;
+static int selectedBoard = BOARD_GRAPH;
+static int lastDrawX = -1;
+static int lastDrawY = -1;
+static bool drawingStroke = false;
+static bool drawStorageReady = false;
+static DrawingSegment drawingSegments[DRAW_SEGMENT_MAX];
+static int drawingSegmentCount = 0;
+static uint32_t currentDrawingId = 0;
+static uint8_t selectedChalkColor = 1;
+static int cursorX = -1;
+static int cursorY = -1;
+static bool cursorVisible = false;
+static bool storageWarningActive = false;
+static unsigned long storageWarningStartedMs = 0;
+static bool storageSavePending = false;
+static bool storageCleanupRunning = false;
+static bool drawingSyncPending = false;
+static bool drawingSyncWaitingForAck = false;
+static bool newBoardAfterSync = false;
+static uint8_t drawingSyncState = 0;
+static uint16_t drawingSyncChunkIndex = 0;
+static uint32_t drawingSyncBytesSent = 0;
+static uint32_t drawingSyncId = 0;
+static unsigned long drawingSyncStartedMs = 0;
+static File drawingSyncFile;
+static char drawingSyncPath[40] = "";
+static volatile bool drawingResultReady = false;
+static ClearDrawingResult pendingDrawingResult = {};
+static char drawStatus[64] = "Draw on the board";
+static unsigned long drawStatusUntilMs = 0;
 
 // The list on screen, and the lists the student came from.
 // crumbTop is how many lists are underneath the one on screen.
@@ -624,6 +712,19 @@ static void copyField(char *dest, int size, const char *src) {
 // The radio task calls this when a packet arrives. It only stores the
 // packet. Drawing and the screen stay in loop(), where they are safe.
 static void takeLinkPacket(const uint8_t *data, int len) {
+  if (len == (int)sizeof(ClearDrawingResult)) {
+    ClearDrawingResult result;
+    memcpy(&result, data, sizeof(result));
+    if (result.version != CLEAR_LINK_VERSION ||
+        result.kind != CLEAR_KIND_DRAWING_RESULT) {
+      return;
+    }
+    noInterrupts();
+    pendingDrawingResult = result;
+    drawingResultReady = true;
+    interrupts();
+    return;
+  }
   if (len != (int)sizeof(ClearNote)) {
     return;
   }
@@ -706,6 +807,7 @@ class TeacherClientCallbacks : public BLEClientCallbacks {
 };
 
 static TeacherClientCallbacks teacherClientCallbacks;
+static void sendDrawingStep();
 
 // The radio calls this when the one-second search ends. It only sets a
 // flag. Connecting here would freeze the touch read.
@@ -726,7 +828,7 @@ static bool connectFoundTeacher(BLEAdvertisedDevice &found) {
   if (!teacherClient->connect(&found)) {
     return false;
   }
-  teacherClient->setMTU(185);
+  teacherClient->setMTU(CLEAR_BLE_MTU);
   BLERemoteService *service = teacherClient->getService(CLEAR_SERVICE_UUID);
   if (service == nullptr) {
     teacherClient->disconnect();
@@ -758,7 +860,8 @@ static void sendOutbound() {
   } else {
     nextBleMs = millis() + 8000;
   }
-  if (currentScreen != SCREEN_SETTINGS && currentScreen != SCREEN_NAME) {
+  if (currentScreen != SCREEN_SETTINGS && currentScreen != SCREEN_NAME &&
+      currentScreen != SCREEN_DRAW_MENU && currentScreen != SCREEN_DRAW_CANVAS) {
     paintStatus();
   }
 }
@@ -766,7 +869,8 @@ static void sendOutbound() {
 // Mark the footer when a notice could not go out.
 static void showSendFailed() {
   noticeSent = false;
-  if (currentScreen != SCREEN_SETTINGS && currentScreen != SCREEN_NAME) {
+  if (currentScreen != SCREEN_SETTINGS && currentScreen != SCREEN_NAME &&
+      currentScreen != SCREEN_DRAW_MENU && currentScreen != SCREEN_DRAW_CANVAS) {
     paintStatus();
   }
 }
@@ -776,12 +880,16 @@ static void showSendFailed() {
 // then kept reporting the old finger, and every later tap was ignored.
 // The search now finishes in the background.
 static void blePump() {
-  if (!linkReady || !needSend) {
+  if (!linkReady || (!needSend && !drawingSyncPending)) {
     return;
   }
   if (teacherClient != nullptr && teacherClient->isConnected() && noticeRemote != nullptr) {
     if (millis() >= nextBleMs) {
-      sendOutbound();
+      if (needSend) {
+        sendOutbound();
+      } else {
+        sendDrawingStep();
+      }
     }
     return;
   }
@@ -810,6 +918,8 @@ static void blePump() {
     }
     if (needSend) {
       sendOutbound();
+    } else if (drawingSyncPending) {
+      sendDrawingStep();
     }
     return;
   }
@@ -837,7 +947,7 @@ static void blePump() {
 static void startTeacherLink() {
   startClock();
   BLEDevice::init("");
-  BLEDevice::setMTU(185);
+  BLEDevice::setMTU(CLEAR_BLE_MTU);
   linkReady = true;
 }
 
@@ -1152,6 +1262,8 @@ static void paintGearButton() {
 //     paintSelected()    the steps for one choice
 //     paintBreathMotion() the counting square
 //     paintWrite()       three lines for how the student feels
+//     paintDrawingMenu() board choices
+//     paintDrawingCanvas() board surface and drawing controls
 //     paintSettings()    name, brightness, and grade level
 //     paintNameEditor()  the keyboard
 //   The words themselves are in the text-and-colors block above.
@@ -1618,6 +1730,680 @@ static void paintNameEditor() {
   lcd.setTextDatum(textdatum_t::top_left);
 }
 
+static void paintDrawingMenu() {
+  lcd.fillScreen(COL_BG);
+  paintTopButton(DRAW_BACK_X, DRAW_BACK_Y, DRAW_BACK_W, DRAW_BACK_H, "Back", COL_ROW);
+
+  lcd.setTextDatum(textdatum_t::middle_center);
+  lcd.setFont(&fonts::Font2);
+  lcd.setTextColor(COL_FG, COL_BG);
+  lcd.drawString("Graph board, White Board, or Chalk board?", 400, 30);
+
+  const int optionX = 24;
+  const int optionW = 752;
+  const int optionH = 96;
+  const int optionYs[] = {82, 190, 298};
+  const uint16_t fills[] = {0xFFFF, 0xFFFF, 0x13A4};
+  const char *labels[] = {"Graph Board - Digital Pencil",
+                          "White Board - Digital Marker",
+                          "Chalk Board - Digital Chalk"};
+  const uint16_t textColors[] = {COL_FG, COL_FG, 0xFFFF};
+
+  for (int i = 0; i < 3; i++) {
+    lcd.fillRoundRect(optionX, optionYs[i], optionW, optionH, 12, fills[i]);
+    lcd.drawRoundRect(optionX, optionYs[i], optionW, optionH, 12, COL_ROW);
+    lcd.setTextColor(textColors[i], fills[i]);
+    lcd.setFont(&fonts::Font4);
+    lcd.drawString(labels[i], 400, optionYs[i] + optionH / 2);
+  }
+  lcd.setTextDatum(textdatum_t::top_left);
+}
+
+static uint16_t drawingSurfaceColor() {
+  return selectedBoard == BOARD_CHALK ? 0x13A4 : 0xFFFF;
+}
+
+static void paintDrawingCanvas() {
+  uint16_t surface = drawingSurfaceColor();
+  uint16_t header = selectedBoard == BOARD_CHALK ? 0x13A4 : COL_BG;
+  lcd.fillScreen(surface);
+  lcd.fillRect(0, 0, 800, DRAW_HEADER_H, header);
+
+  if (selectedBoard == BOARD_GRAPH) {
+    const uint16_t gridColor = 0xCE79;
+    for (int x = 0; x < 800; x += 20) {
+      lcd.drawLine(x, DRAW_HEADER_H, x, DRAW_CANVAS_BOTTOM - 1, gridColor);
+    }
+    for (int y = DRAW_HEADER_H; y < DRAW_CANVAS_BOTTOM; y += 20) {
+      lcd.drawLine(0, y, 799, y, gridColor);
+    }
+  }
+
+  lcd.setTextDatum(textdatum_t::middle_center);
+  lcd.setFont(&fonts::Font2);
+  lcd.setTextColor(selectedBoard == BOARD_CHALK ? 0xFFFF : COL_FG, header);
+  if (selectedBoard == BOARD_GRAPH) {
+    lcd.drawString("Graph Board - Pencil", 555, 30);
+  } else if (selectedBoard == BOARD_WHITE) {
+    lcd.drawString("White Board - Marker", 555, 30);
+  } else {
+    lcd.drawString("Choose chalk", 430, 30);
+  }
+
+  uint16_t buttonFill = selectedBoard == BOARD_CHALK ? 0xFFFF : COL_ROW;
+  paintTopButton(DRAW_BACK_X, DRAW_BUTTON_Y, DRAW_BACK_W, DRAW_BUTTON_H, "Back", buttonFill);
+  paintTopButton(DRAW_SAVE_X, DRAW_BUTTON_Y, 80, DRAW_BUTTON_H, "Save", buttonFill);
+  paintTopButton(DRAW_RESET_X, DRAW_BUTTON_Y, 104, DRAW_BUTTON_H, "Reset", buttonFill);
+  paintTopButton(DRAW_NEW_X, DRAW_BUTTON_Y, 96, DRAW_BUTTON_H, "New", buttonFill);
+  if (selectedBoard == BOARD_CHALK) {
+    for (int i = 0; i < DRAW_COLOR_COUNT; i++) {
+      lcd.fillRoundRect(DRAW_COLOR_X[i], DRAW_COLOR_Y, DRAW_COLOR_W, DRAW_COLOR_H,
+                        8, DRAW_CHALK_COLORS[i]);
+      lcd.drawRoundRect(DRAW_COLOR_X[i], DRAW_COLOR_Y, DRAW_COLOR_W, DRAW_COLOR_H,
+                        8, i == selectedChalkColor ? COL_FG : COL_ROW);
+      if (i == selectedChalkColor) {
+        lcd.drawRect(DRAW_COLOR_X[i] + 2, DRAW_COLOR_Y + 2,
+                     DRAW_COLOR_W - 4, DRAW_COLOR_H - 4, COL_FG);
+      }
+      lcd.setTextDatum(textdatum_t::middle_center);
+      lcd.setFont(&fonts::Font2);
+      uint16_t labelColor = (i == 1 || i == 0) ? COL_FG : 0xFFFF;
+      lcd.setTextColor(labelColor, DRAW_CHALK_COLORS[i]);
+      lcd.drawString(DRAW_CHALK_NAMES[i], DRAW_COLOR_X[i] + DRAW_COLOR_W / 2,
+                     DRAW_COLOR_Y + DRAW_COLOR_H / 2);
+    }
+  }
+
+  for (int i = 0; i < drawingSegmentCount; i++) {
+    const DrawingSegment &segment = drawingSegments[i];
+    int firstOffset = -(segment.width / 2);
+    int lastOffset = firstOffset + segment.width - 1;
+    for (int offset = firstOffset; offset <= lastOffset; offset++) {
+      int y1 = segment.y1 + offset;
+      int y2 = segment.y2 + offset;
+      if (y1 < DRAW_HEADER_H) y1 = DRAW_HEADER_H;
+      if (y2 < DRAW_HEADER_H) y2 = DRAW_HEADER_H;
+      if (y1 >= DRAW_CANVAS_BOTTOM) y1 = DRAW_CANVAS_BOTTOM - 1;
+      if (y2 >= DRAW_CANVAS_BOTTOM) y2 = DRAW_CANVAS_BOTTOM - 1;
+      lcd.drawLine(segment.x1, y1, segment.x2, y2, segment.color);
+    }
+  }
+
+  lcd.fillRect(0, DRAW_CANVAS_BOTTOM, 800, 480 - DRAW_CANVAS_BOTTOM, COL_FOOT);
+  lcd.setTextDatum(textdatum_t::middle_left);
+  lcd.setFont(&fonts::Font2);
+  lcd.setTextColor(COL_FG, COL_FOOT);
+  lcd.drawString(drawStatus, 18, DRAW_CANVAS_BOTTOM + 30);
+  lcd.setTextDatum(textdatum_t::top_left);
+  cursorVisible = false;
+}
+
+static uint16_t drawingInkColor() {
+  if (selectedBoard == BOARD_GRAPH) {
+    return 0x2124;
+  }
+  return selectedBoard == BOARD_WHITE ? 0x0000 : DRAW_CHALK_COLORS[selectedChalkColor];
+}
+
+static int drawingInkWidth() {
+  if (selectedBoard == BOARD_GRAPH) {
+    return 2;
+  }
+  return selectedBoard == BOARD_WHITE ? 7 : 5;
+}
+
+static void drawCursorTool(int x, int y) {
+  if (selectedBoard == BOARD_GRAPH) {
+    lcd.drawLine(x, y, x + 17, y - 25, 0x8410);
+    lcd.drawLine(x + 2, y - 1, x + 19, y - 26, 0x2124);
+    lcd.drawLine(x + 4, y - 2, x + 21, y - 27, 0x8410);
+    lcd.fillTriangle(x, y, x + 4, y - 2, x + 2, y + 3, 0xFBE0);
+    lcd.drawLine(x + 2, y + 3, x + 4, y - 2, COL_FG);
+  } else if (selectedBoard == BOARD_WHITE) {
+    lcd.drawLine(x, y, x + 19, y - 22, 0x0000);
+    lcd.drawLine(x + 2, y - 1, x + 21, y - 23, 0x0000);
+    lcd.drawLine(x + 17, y - 21, x + 21, y - 23, 0xC618);
+    lcd.drawLine(x + 3, y - 5, x + 7, y - 1, 0xC618);
+    lcd.fillTriangle(x, y, x + 3, y - 4, x + 4, y + 3, 0xC618);
+  } else {
+    uint16_t chalk = drawingInkColor();
+    lcd.drawLine(x, y, x + 15, y - 21, chalk);
+    lcd.drawLine(x + 2, y - 1, x + 17, y - 22, chalk);
+    lcd.drawLine(x + 4, y - 2, x + 19, y - 23, 0xC618);
+  }
+}
+
+static bool clipDrawingLine(int &x1, int &y1, int &x2, int &y2,
+                            int left, int top, int right, int bottom) {
+  double dx = x2 - x1;
+  double dy = y2 - y1;
+  double t0 = 0.0;
+  double t1 = 1.0;
+  double p[4] = {-dx, dx, -dy, dy};
+  double q[4] = {x1 - left, right - x1, y1 - top, bottom - y1};
+  for (int i = 0; i < 4; i++) {
+    if (p[i] == 0.0) {
+      if (q[i] < 0.0) return false;
+      continue;
+    }
+    double ratio = q[i] / p[i];
+    if (p[i] < 0.0) {
+      if (ratio > t1) return false;
+      if (ratio > t0) t0 = ratio;
+    } else {
+      if (ratio < t0) return false;
+      if (ratio < t1) t1 = ratio;
+    }
+  }
+  int originalX = x1;
+  int originalY = y1;
+  x1 = originalX + (int)(t0 * dx);
+  y1 = originalY + (int)(t0 * dy);
+  x2 = originalX + (int)(t1 * dx);
+  y2 = originalY + (int)(t1 * dy);
+  return true;
+}
+
+static void restoreCursorArea(int x, int y) {
+  const int left = x - 2;
+  const int top = y - 29;
+  const int right = x + 24;
+  const int bottom = y + 4;
+  const int clippedLeft = left < 0 ? 0 : left;
+  const int clippedTop = top < DRAW_HEADER_H ? DRAW_HEADER_H : top;
+  const int clippedRight = right > 799 ? 799 : right;
+  const int clippedBottom = bottom >= DRAW_CANVAS_BOTTOM ? DRAW_CANVAS_BOTTOM - 1 : bottom;
+  if (clippedLeft > clippedRight || clippedTop > clippedBottom) {
+    return;
+  }
+
+  lcd.fillRect(clippedLeft, clippedTop, clippedRight - clippedLeft + 1,
+               clippedBottom - clippedTop + 1, drawingSurfaceColor());
+  if (selectedBoard == BOARD_GRAPH) {
+    for (int gx = (clippedLeft / 20) * 20; gx <= clippedRight; gx += 20) {
+      lcd.drawLine(gx, clippedTop, gx, clippedBottom, 0xCE79);
+    }
+    int firstGridY = DRAW_HEADER_H +
+                     ((clippedTop - DRAW_HEADER_H) / 20) * 20;
+    for (int gy = firstGridY; gy <= clippedBottom; gy += 20) {
+      lcd.drawLine(clippedLeft, gy, clippedRight, gy, 0xCE79);
+    }
+  }
+
+  for (int i = 0; i < drawingSegmentCount; i++) {
+    const DrawingSegment &segment = drawingSegments[i];
+    int firstOffset = -(segment.width / 2);
+    int lastOffset = firstOffset + segment.width - 1;
+    for (int offset = firstOffset; offset <= lastOffset; offset++) {
+      int x1 = segment.x1;
+      int y1 = segment.y1 + offset;
+      int x2 = segment.x2;
+      int y2 = segment.y2 + offset;
+      if (clipDrawingLine(x1, y1, x2, y2, clippedLeft, clippedTop,
+                          clippedRight, clippedBottom)) {
+        lcd.drawLine(x1, y1, x2, y2, segment.color);
+      }
+    }
+  }
+}
+
+static void moveDrawingCursor(int x, int y) {
+  if (cursorVisible) {
+    restoreCursorArea(cursorX, cursorY);
+  }
+  drawCursorTool(x, y);
+  cursorX = x;
+  cursorY = y;
+  cursorVisible = true;
+}
+
+static void drawInkSegment(int x1, int y1, int x2, int y2) {
+  if (drawingSegmentCount >= DRAW_SEGMENT_MAX) {
+    copyField(drawStatus, sizeof(drawStatus), "Board has reached its drawing limit");
+    drawStatusUntilMs = millis() + 3000;
+    return;
+  }
+  DrawingSegment &segment = drawingSegments[drawingSegmentCount++];
+  segment.x1 = x1;
+  segment.y1 = y1;
+  segment.x2 = x2;
+  segment.y2 = y2;
+  segment.color = drawingInkColor();
+  segment.width = drawingInkWidth();
+
+  int firstOffset = -(segment.width / 2);
+  int lastOffset = firstOffset + segment.width - 1;
+  for (int offset = firstOffset; offset <= lastOffset; offset++) {
+    int y1Offset = y1 + offset;
+    int y2Offset = y2 + offset;
+    if (y1Offset < DRAW_HEADER_H) y1Offset = DRAW_HEADER_H;
+    if (y2Offset < DRAW_HEADER_H) y2Offset = DRAW_HEADER_H;
+    if (y1Offset >= DRAW_CANVAS_BOTTOM) y1Offset = DRAW_CANVAS_BOTTOM - 1;
+    if (y2Offset >= DRAW_CANVAS_BOTTOM) y2Offset = DRAW_CANVAS_BOTTOM - 1;
+    lcd.drawLine(x1, y1Offset, x2, y2Offset, segment.color);
+  }
+}
+
+static const char *drawingFilePath(int board) {
+  if (board == BOARD_GRAPH) return "/graph.bin";
+  if (board == BOARD_WHITE) return "/white.bin";
+  return "/chalk.bin";
+}
+
+static const char *drawingBoardName(int board) {
+  if (board == BOARD_GRAPH) return "graph";
+  if (board == BOARD_WHITE) return "whiteboard";
+  return "chalkboard";
+}
+
+static void setDrawStatus(const char *text, unsigned long durationMs = 0) {
+  copyField(drawStatus, sizeof(drawStatus), text);
+  drawStatusUntilMs = durationMs ? millis() + durationMs : 0;
+  if (currentScreen == SCREEN_DRAW_CANVAS) {
+    lcd.fillRect(0, DRAW_CANVAS_BOTTOM, 800, 480 - DRAW_CANVAS_BOTTOM, COL_FOOT);
+    lcd.setTextDatum(textdatum_t::middle_left);
+    lcd.setFont(&fonts::Font2);
+    lcd.setTextColor(COL_FG, COL_FOOT);
+    lcd.drawString(drawStatus, 18, DRAW_CANVAS_BOTTOM + 30);
+    lcd.setTextDatum(textdatum_t::top_left);
+  }
+}
+
+static uint32_t newDrawingId() {
+  uint32_t id = esp_random();
+  return id ? id : 1;
+}
+
+static void warnDrawingStorage(const char *message) {
+  storageSavePending = true;
+  if (!storageWarningActive) {
+    storageWarningActive = true;
+    storageWarningStartedMs = millis();
+  }
+  setDrawStatus(message);
+}
+
+static bool saveDrawingFile() {
+  if (!drawStorageReady) {
+    setDrawStatus("Local drawing storage is unavailable");
+    return false;
+  }
+  const char *path = drawingFilePath(selectedBoard);
+  const char *tempPath = "/drawing.tmp";
+  size_t bytes = sizeof(DrawingFileHeader) +
+                 (size_t)drawingSegmentCount * sizeof(DrawingSegment);
+  size_t freeBytes = SPIFFS.totalBytes() > SPIFFS.usedBytes()
+                       ? SPIFFS.totalBytes() - SPIFFS.usedBytes() : 0;
+  if (freeBytes < bytes + 256) {
+    warnDrawingStorage("Storage low. Old board will be removed in 2:00");
+    return false;
+  }
+
+  File file = SPIFFS.open(tempPath, FILE_WRITE);
+  if (!file) {
+    warnDrawingStorage("Storage issue. Old board will be removed in 2:00");
+    return false;
+  }
+  DrawingFileHeader header = {};
+  header.magic = DRAW_FILE_MAGIC;
+  header.drawingId = currentDrawingId;
+  header.savedAt = (uint32_t)time(nullptr);
+  header.segmentCount = drawingSegmentCount;
+  header.version = DRAW_FILE_VERSION;
+  header.board = selectedBoard;
+  header.chalkColor = selectedChalkColor;
+  size_t written = file.write((const uint8_t *)&header, sizeof(header));
+  if (written == sizeof(header) && drawingSegmentCount > 0) {
+    written += file.write((const uint8_t *)drawingSegments,
+                          (size_t)drawingSegmentCount * sizeof(DrawingSegment));
+  }
+  file.flush();
+  file.close();
+  const char *backupPath = "/drawing.bak";
+  SPIFFS.remove(backupPath);
+  bool hadPrevious = SPIFFS.exists(path);
+  bool movedPrevious = !hadPrevious || SPIFFS.rename(path, backupPath);
+  bool replaced = written == bytes && movedPrevious &&
+                  SPIFFS.rename(tempPath, path);
+  if (!replaced) {
+    if (hadPrevious && movedPrevious) {
+      SPIFFS.rename(backupPath, path);
+    }
+    SPIFFS.remove(tempPath);
+    warnDrawingStorage("Storage issue. Old board will be removed in 2:00");
+    return false;
+  }
+  SPIFFS.remove(backupPath);
+  storageSavePending = false;
+  storageWarningActive = false;
+  if (drawingSegmentCount == 0) {
+    setDrawStatus("Blank board saved");
+  } else {
+    setDrawStatus("Drawing saved on this panel");
+  }
+  return true;
+}
+
+static bool loadDrawingFile(int board) {
+  drawingSegmentCount = 0;
+  currentDrawingId = newDrawingId();
+  selectedBoard = board;
+  selectedChalkColor = 1;
+  if (!drawStorageReady) {
+    setDrawStatus("Local drawing storage is unavailable");
+    return false;
+  }
+  File file = SPIFFS.open(drawingFilePath(board), FILE_READ);
+  if (!file) {
+    return true;
+  }
+  DrawingFileHeader header = {};
+  if (file.read((uint8_t *)&header, sizeof(header)) != sizeof(header) ||
+      header.magic != DRAW_FILE_MAGIC || header.version != DRAW_FILE_VERSION ||
+      header.board != board || header.segmentCount > DRAW_SEGMENT_MAX ||
+      file.size() != sizeof(header) +
+                     (size_t)header.segmentCount * sizeof(DrawingSegment)) {
+    file.close();
+    SPIFFS.remove(drawingFilePath(board));
+    setDrawStatus("An unreadable saved board was removed");
+    return false;
+  }
+  if (header.segmentCount > 0 &&
+      file.read((uint8_t *)drawingSegments,
+                (size_t)header.segmentCount * sizeof(DrawingSegment)) !=
+        (size_t)header.segmentCount * sizeof(DrawingSegment)) {
+    file.close();
+    SPIFFS.remove(drawingFilePath(board));
+    setDrawStatus("An unreadable saved board was removed");
+    return false;
+  }
+  file.close();
+  for (int i = 0; i < header.segmentCount; i++) {
+    if (drawingSegments[i].x1 > 799 || drawingSegments[i].x2 > 799 ||
+        drawingSegments[i].y1 < DRAW_HEADER_H ||
+        drawingSegments[i].y1 >= DRAW_CANVAS_BOTTOM ||
+        drawingSegments[i].y2 < DRAW_HEADER_H ||
+        drawingSegments[i].y2 >= DRAW_CANVAS_BOTTOM ||
+        drawingSegments[i].width == 0 || drawingSegments[i].width > 12) {
+      SPIFFS.remove(drawingFilePath(board));
+      setDrawStatus("An unreadable saved board was removed");
+      return false;
+    }
+  }
+  currentDrawingId = header.drawingId ? header.drawingId : newDrawingId();
+  selectedChalkColor = header.chalkColor < DRAW_COLOR_COUNT ? header.chalkColor : 1;
+  drawingSegmentCount = header.segmentCount;
+  return true;
+}
+
+static bool deleteOldestLocalDrawing() {
+  int oldestBoard = -1;
+  uint32_t oldestTime = UINT32_MAX;
+  for (int board = 0; board < 3; board++) {
+    if (board == selectedBoard) continue;
+    File file = SPIFFS.open(drawingFilePath(board), FILE_READ);
+    if (!file) continue;
+    DrawingFileHeader header = {};
+    bool valid = file.read((uint8_t *)&header, sizeof(header)) == sizeof(header) &&
+                 header.magic == DRAW_FILE_MAGIC && header.board == board;
+    file.close();
+    uint32_t savedAt = valid ? header.savedAt : 0;
+    if (oldestBoard < 0 || savedAt < oldestTime) {
+      oldestBoard = board;
+      oldestTime = savedAt;
+    }
+  }
+  if (oldestBoard < 0) {
+    for (int board = 0; board < 3; board++) {
+      File file = SPIFFS.open(drawingFilePath(board), FILE_READ);
+      if (!file) continue;
+      DrawingFileHeader header = {};
+      bool valid = file.read((uint8_t *)&header, sizeof(header)) == sizeof(header) &&
+                   header.magic == DRAW_FILE_MAGIC && header.board == board;
+      file.close();
+      uint32_t savedAt = valid ? header.savedAt : 0;
+      if (oldestBoard < 0 || savedAt < oldestTime) {
+        oldestBoard = board;
+        oldestTime = savedAt;
+      }
+    }
+  }
+  if (oldestBoard < 0 || !SPIFFS.remove(drawingFilePath(oldestBoard))) {
+    return false;
+  }
+  char status[64];
+  snprintf(status, sizeof(status), "Removed oldest local %s board",
+           drawingBoardName(oldestBoard));
+  setDrawStatus(status, 5000);
+  return true;
+}
+
+static void writeXmlAttribute(File &file, const char *text) {
+  for (const char *p = text; p != nullptr && *p; p++) {
+    if (*p == '&') file.print("&amp;");
+    else if (*p == '"') file.print("&quot;");
+    else if (*p == '<') file.print("&lt;");
+    else if (*p == '>') file.print("&gt;");
+    else file.write((uint8_t)*p);
+  }
+}
+
+static void colorToHex(uint16_t color, char *out, size_t size) {
+  uint8_t red = ((color >> 11) & 0x1F) * 255 / 31;
+  uint8_t green = ((color >> 5) & 0x3F) * 255 / 63;
+  uint8_t blue = (color & 0x1F) * 255 / 31;
+  snprintf(out, size, "#%02X%02X%02X", red, green, blue);
+}
+
+static bool writeDrawingSvg(int board, const char *path) {
+  File file = SPIFFS.open(path, FILE_WRITE);
+  if (!file) return false;
+  file.print("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"800\" height=\"480\" viewBox=\"0 0 800 480\" data-board=\"");
+  file.print(drawingBoardName(board));
+  file.print("\" data-student=\"");
+  writeXmlAttribute(file, studentName);
+  file.print("\" data-drawing-id=\"");
+  file.print(currentDrawingId);
+  file.print("\"><rect width=\"800\" height=\"480\" fill=\"");
+  char hex[8];
+  colorToHex(board == BOARD_CHALK ? 0x13A4 : 0xFFFF, hex, sizeof(hex));
+  file.print(hex);
+  file.print("\"/>");
+  if (board == BOARD_GRAPH) {
+    file.print("<g stroke=\"#D0D0D0\" stroke-width=\"1\">");
+    for (int x = 0; x < 800; x += 20) {
+      file.printf("<line x1=\"%d\" y1=\"%d\" x2=\"%d\" y2=\"%d\"/>",
+                  x, DRAW_HEADER_H, x, DRAW_CANVAS_BOTTOM - 1);
+    }
+    for (int y = DRAW_HEADER_H; y < DRAW_CANVAS_BOTTOM; y += 20) {
+      file.printf("<line x1=\"0\" y1=\"%d\" x2=\"799\" y2=\"%d\"/>", y, y);
+    }
+    file.print("</g>");
+  }
+  for (int i = 0; i < drawingSegmentCount; i++) {
+    const DrawingSegment &segment = drawingSegments[i];
+    colorToHex(segment.color, hex, sizeof(hex));
+    file.printf("<line x1=\"%u\" y1=\"%u\" x2=\"%u\" y2=\"%u\" stroke=\"%s\" stroke-width=\"%u\" stroke-linecap=\"round\"/>",
+                segment.x1, segment.y1, segment.x2, segment.y2, hex, segment.width);
+  }
+  file.print("</svg>");
+  file.flush();
+  bool ok = file.getWriteError() == 0;
+  file.close();
+  return ok;
+}
+
+static bool prepareDrawingSync(bool startNewBoard) {
+  if (drawingSyncPending || drawingSyncWaitingForAck) {
+    setDrawStatus("A drawing is already being sent");
+    return false;
+  }
+  if (!saveDrawingFile()) return false;
+  if (!writeDrawingSvg(selectedBoard, "/drawing-export.svg")) {
+    SPIFFS.remove("/drawing-export.svg");
+    warnDrawingStorage("Storage issue. Old board will be removed in 2:00");
+    return false;
+  }
+  drawingSyncFile = SPIFFS.open("/drawing-export.svg", FILE_READ);
+  if (!drawingSyncFile) {
+    SPIFFS.remove("/drawing-export.svg");
+    warnDrawingStorage("Storage issue. Old board will be removed in 2:00");
+    return false;
+  }
+  drawingSyncId = currentDrawingId;
+  drawingSyncBytesSent = 0;
+  drawingSyncChunkIndex = 0;
+  drawingSyncState = 0;
+  drawingSyncStartedMs = millis();
+  newBoardAfterSync = startNewBoard;
+  drawingSyncPending = true;
+  setDrawStatus("Waiting to send drawing to teacher");
+  return true;
+}
+
+static bool sendDrawingPacket(const uint8_t *data, size_t size) {
+  return noticeRemote != nullptr &&
+         noticeRemote->writeValue((uint8_t *)data, size, true);
+}
+
+static void sendDrawingStep() {
+  if (noticeRemote == nullptr || drawingSyncWaitingForAck) return;
+  if (drawingSyncState == 0) {
+    ClearDrawingStart packet = {};
+    packet.version = CLEAR_LINK_VERSION;
+    packet.kind = CLEAR_KIND_DRAWING_START;
+    packet.drawingId = drawingSyncId;
+    packet.board = selectedBoard;
+    packet.totalBytes = drawingSyncFile.size();
+    copyField(packet.student, sizeof(packet.student), studentName);
+    if (!sendDrawingPacket((const uint8_t *)&packet, sizeof(packet))) {
+      drawingSyncPending = false;
+      drawingSyncFile.close();
+      setDrawStatus("Could not start transfer; tap Save to retry");
+      return;
+    }
+    drawingSyncState = 1;
+    setDrawStatus("Sending drawing to teacher");
+    return;
+  }
+  if (drawingSyncState == 1 && drawingSyncFile.available()) {
+    ClearDrawingChunk packet = {};
+    packet.version = CLEAR_LINK_VERSION;
+    packet.kind = CLEAR_KIND_DRAWING_CHUNK;
+    packet.drawingId = drawingSyncId;
+    packet.chunkIndex = drawingSyncChunkIndex;
+    size_t count = drawingSyncFile.read(packet.payload, CLEAR_DRAWING_CHUNK_SIZE);
+    if (count == 0) {
+      drawingSyncPending = false;
+      drawingSyncFile.close();
+      setDrawStatus("Drawing transfer stopped; tap Save to retry");
+      return;
+    }
+    packet.payloadSize = count;
+    size_t packetSize = offsetof(ClearDrawingChunk, payload) + count;
+    if (!sendDrawingPacket((const uint8_t *)&packet, packetSize)) {
+      drawingSyncPending = false;
+      drawingSyncFile.close();
+      setDrawStatus("Drawing transfer failed; tap Save to retry");
+      return;
+    }
+    drawingSyncBytesSent += count;
+    drawingSyncChunkIndex++;
+    return;
+  }
+  if (drawingSyncState == 1) {
+    if (drawingSyncBytesSent != drawingSyncFile.size()) {
+      drawingSyncPending = false;
+      drawingSyncFile.close();
+      setDrawStatus("Drawing export was incomplete; tap Save to retry");
+      return;
+    }
+    ClearDrawingEnd packet = {};
+    packet.version = CLEAR_LINK_VERSION;
+    packet.kind = CLEAR_KIND_DRAWING_END;
+    packet.drawingId = drawingSyncId;
+    if (!sendDrawingPacket((const uint8_t *)&packet, sizeof(packet))) {
+      drawingSyncPending = false;
+      drawingSyncFile.close();
+      setDrawStatus("Drawing transfer failed; tap Save to retry");
+      return;
+    }
+    drawingSyncPending = false;
+    drawingSyncWaitingForAck = true;
+    drawingSyncStartedMs = millis();
+    setDrawStatus("Waiting for teacher card confirmation");
+  }
+}
+
+static void finishDrawingSync(bool saved) {
+  drawingSyncWaitingForAck = false;
+  drawingSyncPending = false;
+  drawingSyncState = 0;
+  if (drawingSyncFile) drawingSyncFile.close();
+  if (!saved) {
+    newBoardAfterSync = false;
+    setDrawStatus("Teacher card could not save; tap Save to retry");
+    return;
+  }
+  setDrawStatus("Drawing saved to teacher card");
+  if (newBoardAfterSync) {
+    newBoardAfterSync = false;
+    drawingSegmentCount = 0;
+    currentDrawingId = newDrawingId();
+    cursorVisible = false;
+    saveDrawingFile();
+    paintDrawingCanvas();
+    setDrawStatus("New board ready");
+  }
+}
+
+static void finishDrawingStroke() {
+  if (!drawingStroke) return;
+  drawingStroke = false;
+  lastDrawX = -1;
+  lastDrawY = -1;
+  if (cursorVisible) {
+    restoreCursorArea(cursorX, cursorY);
+    cursorVisible = false;
+  }
+  saveDrawingFile();
+}
+
+static void updateDrawingStorageWarning() {
+  static unsigned long lastShownSeconds = ULONG_MAX;
+  if (!storageWarningActive) {
+    lastShownSeconds = ULONG_MAX;
+    if (drawStatusUntilMs != 0 &&
+        (long)(millis() - drawStatusUntilMs) >= 0) {
+      setDrawStatus("Draw on the board");
+    }
+    return;
+  }
+  unsigned long elapsed = millis() - storageWarningStartedMs;
+  if (elapsed < DRAW_WARNING_MS) {
+    unsigned long remaining = (DRAW_WARNING_MS - elapsed + 999) / 1000;
+    if (remaining == lastShownSeconds) return;
+    lastShownSeconds = remaining;
+    char message[64];
+    snprintf(message, sizeof(message), "Storage full: old board removed in %lu:%02lu",
+             remaining / 60, remaining % 60);
+    setDrawStatus(message);
+    return;
+  }
+
+  storageWarningActive = false;
+  if (!deleteOldestLocalDrawing()) {
+    storageSavePending = false;
+    setDrawStatus("Storage full; no old local board was available to remove");
+    return;
+  }
+  if (storageSavePending && !saveDrawingFile()) {
+    storageSavePending = false;
+    storageWarningActive = false;
+    setDrawStatus("Storage full; this drawing could not be saved");
+  }
+}
+
 // =============================================================================
 // =============================================================================
 //
@@ -1767,6 +2553,46 @@ static void openWrite() {
   paintWrite();
 }
 
+static void openDrawingMenu() {
+  drawingStroke = false;
+  lastDrawX = -1;
+  lastDrawY = -1;
+  currentScreen = SCREEN_DRAW_MENU;
+  paintDrawingMenu();
+}
+
+static void openDrawingCanvas(int board) {
+  drawingStroke = false;
+  lastDrawX = -1;
+  lastDrawY = -1;
+  cursorVisible = false;
+  bool loaded = loadDrawingFile(board);
+  currentScreen = SCREEN_DRAW_CANVAS;
+  if (loaded) {
+    setDrawStatus(drawStorageReady ? "Draw here; strokes save on this panel" :
+                                     "Local storage unavailable; drawing will not persist");
+  }
+  paintDrawingCanvas();
+}
+
+static void resetDrawingBoard() {
+  drawingStroke = false;
+  lastDrawX = -1;
+  lastDrawY = -1;
+  cursorVisible = false;
+  drawingSegmentCount = 0;
+  currentDrawingId = newDrawingId();
+  storageSavePending = false;
+  storageWarningActive = false;
+  if (drawStorageReady && SPIFFS.exists(drawingFilePath(selectedBoard)) &&
+      !SPIFFS.remove(drawingFilePath(selectedBoard))) {
+    setDrawStatus("Could not remove the saved board");
+    return;
+  }
+  paintDrawingCanvas();
+  setDrawStatus("Board reset. Previous teacher copy is unchanged");
+}
+
 // The row the student pressed. A list opens the next page and does
 // not notify. Every other action notifies once.
 static void chooseItem(int index) {
@@ -1774,6 +2600,10 @@ static void chooseItem(int index) {
     return;
   }
   const Item *item = &viewItems[index];
+  if (item->action == ACT_DRAWING) {
+    openDrawingMenu();
+    return;
+  }
   if (item->action == ACT_OPEN) {
     openChildList(item);
     return;
@@ -2045,6 +2875,8 @@ void setup() {
     }
   }
   applyBrightness();
+  drawStorageReady = SPIFFS.begin(false);
+  currentDrawingId = newDrawingId();
 
   startTeacherLink();     // radio to the teacher device, not a phone hotspot
   screenMs = millis();    // start the two-second greeting timer
@@ -2072,10 +2904,29 @@ void loop() {
         note.eventId == waitingId &&
         strcmp(note.student, studentName) == 0) {
       teacherReply = note.answer;
-      if (currentScreen != SCREEN_SETTINGS && currentScreen != SCREEN_NAME) {
+      if (currentScreen != SCREEN_SETTINGS && currentScreen != SCREEN_NAME &&
+          currentScreen != SCREEN_DRAW_MENU && currentScreen != SCREEN_DRAW_CANVAS) {
         paintStatus();
       }
     }
+  }
+
+  if (drawingResultReady) {
+    ClearDrawingResult result;
+    noInterrupts();
+    result = pendingDrawingResult;
+    drawingResultReady = false;
+    interrupts();
+    if (drawingSyncWaitingForAck && result.drawingId == drawingSyncId) {
+      finishDrawingSync(result.saved != 0);
+    }
+  }
+  if (drawingSyncWaitingForAck &&
+      (millis() - drawingSyncStartedMs) >= 15000) {
+    finishDrawingSync(false);
+  }
+  if (storageWarningActive || currentScreen == SCREEN_DRAW_CANVAS) {
+    updateDrawingStorageWarning();
   }
 
   // The breathing square and the count move while the student watches.
@@ -2091,12 +2942,36 @@ void loop() {
     showMainMenu();
   }
 
-  // readFinger is true the whole time a finger is down, and it fills tx, ty.
-  // touchWasDown remembers the previous pass, so we act only on the
-  // moment the finger first lands. TAP_GAP_MS blocks a bounce right after.
+  // readFinger fills tx and ty while the finger is down. Touch-down starts
+  // drawing; touchWasDown prevents a held finger from starting new strokes.
   int32_t tx = 0;
   int32_t ty = 0;
   bool touchDown = readFinger(&tx, &ty);
+  if (currentScreen == SCREEN_DRAW_CANVAS) {
+    if (!touchDown) {
+      finishDrawingStroke();
+    } else if (!drawingStroke && !touchWasDown &&
+               ty >= DRAW_HEADER_H && ty < DRAW_CANVAS_BOTTOM) {
+      int drawY = ty;
+      int minDrawY = DRAW_HEADER_H + drawingInkWidth() / 2;
+      if (drawY < minDrawY) {
+        drawY = minDrawY;
+      }
+      drawingStroke = true;
+      lastDrawX = tx;
+      lastDrawY = drawY;
+      drawInkSegment(tx, drawY, tx, drawY);
+      moveDrawingCursor(tx, drawY);
+    } else if (drawingStroke && ty >= DRAW_HEADER_H &&
+               ty < DRAW_CANVAS_BOTTOM) {
+      drawInkSegment(lastDrawX, lastDrawY, tx, ty);
+      moveDrawingCursor(tx, ty);
+      lastDrawX = tx;
+      lastDrawY = ty;
+    } else if (drawingStroke) {
+      finishDrawingStroke();
+    }
+  }
   if (touchDown && !touchWasDown && (millis() - tapMs) >= TAP_GAP_MS) {
     tapMs = millis();
     bool onGearScreen = currentScreen == SCREEN_HELLO ||
@@ -2121,7 +2996,40 @@ void loop() {
           }
         }
       }
-    // Detail page: Back, or Begin on the breathing screen.
+    } else if (currentScreen == SCREEN_DRAW_MENU) {
+      if (inBox(tx, ty, DRAW_BACK_X, DRAW_BACK_Y, DRAW_BACK_W, DRAW_BACK_H)) {
+        showMainMenu();
+      } else if (inBox(tx, ty, 24, 82, 752, 96)) {
+        openDrawingCanvas(BOARD_GRAPH);
+      } else if (inBox(tx, ty, 24, 190, 752, 96)) {
+        openDrawingCanvas(BOARD_WHITE);
+      } else if (inBox(tx, ty, 24, 298, 752, 96)) {
+        openDrawingCanvas(BOARD_CHALK);
+      }
+    } else if (currentScreen == SCREEN_DRAW_CANVAS) {
+      if (inBox(tx, ty, DRAW_BACK_X, DRAW_BACK_Y, DRAW_BACK_W, DRAW_BACK_H)) {
+        openDrawingMenu();
+      } else if (selectedBoard == BOARD_CHALK &&
+                 inBox(tx, ty, DRAW_COLOR_X[0], DRAW_COLOR_Y,
+                       DRAW_COLOR_X[DRAW_COLOR_COUNT - 1] +
+                         DRAW_COLOR_W - DRAW_COLOR_X[0], DRAW_COLOR_H)) {
+        for (int i = 0; i < DRAW_COLOR_COUNT; i++) {
+          if (inBox(tx, ty, DRAW_COLOR_X[i], DRAW_COLOR_Y,
+                    DRAW_COLOR_W, DRAW_COLOR_H)) {
+            selectedChalkColor = i;
+            saveDrawingFile();
+            paintDrawingCanvas();
+            break;
+          }
+        }
+      } else if (inBox(tx, ty, DRAW_SAVE_X, DRAW_BUTTON_Y, 80, DRAW_BUTTON_H)) {
+        prepareDrawingSync(false);
+      } else if (inBox(tx, ty, DRAW_RESET_X, DRAW_BUTTON_Y, 104, DRAW_BUTTON_H)) {
+        resetDrawingBoard();
+      } else if (inBox(tx, ty, DRAW_NEW_X, DRAW_BUTTON_Y, 96, DRAW_BUTTON_H)) {
+        prepareDrawingSync(true);
+      }
+      // Detail page: Back, or Begin on the breathing screen.
     } else if (currentScreen == SCREEN_SELECTED) {
       if (inBox(tx, ty, BACK_X, BACK_Y, BACK_W, BACK_H)) {
         goBack();

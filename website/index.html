@@ -94,6 +94,11 @@
     th { color: var(--muted); font-weight: 600; }
     .weeks { list-style: none; padding: 0; margin: 0; }
     .weeks li { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
+    .drawing-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 14px; }
+    .drawing-card { background: var(--sky); border-radius: 16px; padding: 12px; }
+    .drawing-card img { display: block; width: 100%; aspect-ratio: 5 / 3; object-fit: contain; background: white; border-radius: 10px; }
+    .drawing-card p { margin: 8px 0 0; }
+    label.field-label { display: block; margin-top: 14px; font-weight: 650; }
     button.quiet {
       font: inherit; border: 1px solid var(--line); background: white; color: var(--ink);
       border-radius: 999px; padding: 6px 12px; cursor: pointer;
@@ -121,6 +126,11 @@
       <label class="pick">Choose CLEAR.CSV
         <input id="file" type="file" accept=".csv,text/csv">
       </label>
+      <label class="field-label" for="drawings">Student drawing files (optional)</label>
+      <label class="pick">Choose SVG drawings
+        <input id="drawings" type="file" accept=".svg,image/svg+xml" multiple>
+      </label>
+      <p>Copy CLEAR.CSV and any DRAWxxxx.SVG files from the teacher device. Choose drawings before importing the CSV to save them with that week.</p>
       <p id="message" class="message"></p>
     </section>
 
@@ -135,6 +145,13 @@
       <section class="panel" id="students"></section>
     </div>
     <section class="panel" id="recent"></section>
+    <section class="panel" id="drawing-panel">
+      <h2>Student drawings</h2>
+      <p class="empty">Imported drawings stay with their week in this browser.</p>
+      <label class="field-label" for="drawing-student">Student</label>
+      <select id="drawing-student"></select>
+      <div id="drawing-gallery"></div>
+    </section>
     <section class="panel">
       <h2>Weeks on this page</h2>
       <p id="example-note" class="empty"></p>
@@ -144,6 +161,10 @@
   <script>
     var STORAGE_KEY = "clear-weeks";
     var HIDE_KEY = "clear-hidden-examples";
+    var pendingDrawings = [];
+    var drawingReadPromise = Promise.resolve();
+    var drawingsReady = true;
+    var drawingObjectUrls = [];
 
     // One sample class, four finished school weeks. day is Mon=0 … Fri=4.
     // Feelings and choices match the student panel. kind is ask or try.
@@ -352,6 +373,147 @@
       });
     }
 
+    function sanitizeDrawingSvg(text, filename) {
+      if (text.length > 300000) throw new Error(filename + " is too large.");
+      var source = new DOMParser().parseFromString(text, "image/svg+xml");
+      var root = source.documentElement;
+      if (!root || root.localName !== "svg" ||
+          source.getElementsByTagName("parsererror").length) {
+        throw new Error(filename + " is not a valid SVG drawing.");
+      }
+      var student = root.getAttribute("data-student") || "";
+      var board = root.getAttribute("data-board") || "";
+      var drawingId = root.getAttribute("data-drawing-id") || "";
+      if (!student || student.length > 16 ||
+          ["graph", "whiteboard", "chalkboard"].indexOf(board) < 0 ||
+          !/^\d+$/.test(drawingId)) {
+        throw new Error(filename + " is missing drawing details.");
+      }
+
+      var svgNamespace = "http://www.w3.org/2000/svg";
+      var safeRoot = document.createElementNS(svgNamespace, "svg");
+      safeRoot.setAttribute("xmlns", svgNamespace);
+      safeRoot.setAttribute("width", "800");
+      safeRoot.setAttribute("height", "480");
+      safeRoot.setAttribute("viewBox", "0 0 800 480");
+      safeRoot.setAttribute("data-student", student);
+      safeRoot.setAttribute("data-board", board);
+      safeRoot.setAttribute("data-drawing-id", drawingId);
+      var allowed = {
+        rect: ["x", "y", "width", "height", "fill", "rx", "ry"],
+        line: ["x1", "y1", "x2", "y2", "stroke", "stroke-width", "stroke-linecap"],
+        g: ["fill", "stroke", "stroke-width", "stroke-linecap"]
+      };
+      var numberAttrs = ["x", "y", "width", "height", "rx", "ry", "x1", "y1", "x2", "y2", "stroke-width"];
+      var numberPattern = /^-?\d+(?:\.\d+)?$/;
+      var colorPattern = /^(?:#[0-9a-f]{6}|none)$/i;
+      var elementCount = 0;
+
+      function copySafeNode(parent, node) {
+        if (node.nodeType !== 1) return;
+        var tag = node.localName;
+        if (node.namespaceURI !== svgNamespace ||
+            !Object.prototype.hasOwnProperty.call(allowed, tag)) {
+          throw new Error(filename + " contains unsupported SVG content.");
+        }
+        elementCount++;
+        if (elementCount > 5000) throw new Error(filename + " has too many drawing elements.");
+        var clean = document.createElementNS(svgNamespace, tag);
+        Array.prototype.forEach.call(node.attributes, function (attr) {
+          if (allowed[tag].indexOf(attr.name) < 0) return;
+          var value = attr.value;
+          if (numberAttrs.indexOf(attr.name) >= 0) {
+            if (!numberPattern.test(value) || Math.abs(Number(value)) > 10000 ||
+                (attr.name === "stroke-width" && Number(value) > 64)) {
+              throw new Error(filename + " has an invalid number.");
+            }
+          } else if (attr.name === "fill" || attr.name === "stroke") {
+            if (!colorPattern.test(value)) throw new Error(filename + " has an invalid color.");
+          } else if (attr.name === "stroke-linecap" &&
+                     ["round", "butt", "square"].indexOf(value) < 0) {
+            throw new Error(filename + " has an invalid line style.");
+          }
+          clean.setAttribute(attr.name, value);
+        });
+        parent.appendChild(clean);
+        Array.prototype.forEach.call(node.childNodes, function (child) {
+          copySafeNode(clean, child);
+        });
+      }
+
+      Array.prototype.forEach.call(root.childNodes, function (child) {
+        copySafeNode(safeRoot, child);
+      });
+      return {
+        student: student,
+        board: board,
+        svg: new XMLSerializer().serializeToString(safeRoot)
+      };
+    }
+
+    function renderDrawingGallery(weeks) {
+      drawingObjectUrls.forEach(function (url) { URL.revokeObjectURL(url); });
+      drawingObjectUrls = [];
+      var drawings = [];
+      weeks.forEach(function (week) {
+        (week.drawings || []).forEach(function (drawing) {
+          drawings.push({
+            week: week.name,
+            student: drawing.student,
+            board: drawing.board,
+            svg: drawing.svg
+          });
+        });
+      });
+
+      var select = document.getElementById("drawing-student");
+      var previous = select.value;
+      var students = [];
+      drawings.forEach(function (drawing) {
+        if (students.indexOf(drawing.student) < 0) students.push(drawing.student);
+      });
+      students.sort();
+      select.innerHTML = "";
+      students.forEach(function (student) {
+        var option = document.createElement("option");
+        option.value = student;
+        option.textContent = student;
+        select.appendChild(option);
+      });
+      if (students.indexOf(previous) >= 0) select.value = previous;
+
+      var gallery = document.getElementById("drawing-gallery");
+      gallery.innerHTML = "";
+      if (!drawings.length) {
+        gallery.innerHTML = "<p class='empty'>No student drawings have been imported yet.</p>";
+        return;
+      }
+      var visible = drawings.filter(function (drawing) {
+        return drawing.student === select.value;
+      });
+      if (!visible.length) {
+        gallery.innerHTML = "<p class='empty'>No drawings for this student.</p>";
+        return;
+      }
+      var grid = document.createElement("div");
+      grid.className = "drawing-grid";
+      visible.forEach(function (drawing) {
+        var card = document.createElement("article");
+        card.className = "drawing-card";
+        var image = document.createElement("img");
+        image.alt = drawing.student + " " + drawing.board + " drawing";
+        var url = URL.createObjectURL(new Blob([drawing.svg], { type: "image/svg+xml" }));
+        drawingObjectUrls.push(url);
+        image.src = url;
+        var caption = document.createElement("p");
+        caption.textContent = drawing.student + " — " + drawing.board + " — " + drawing.week;
+        card.appendChild(image);
+        card.appendChild(caption);
+        grid.appendChild(card);
+      });
+      gallery.appendChild(grid);
+    }
+
     function eventsIn(rows) {
       var byId = {};
       var order = [];
@@ -527,33 +689,90 @@
       var reader = new FileReader();
       reader.onload = function () {
         var text = String(reader.result || "");
-        var first = text.replace(/^\uFEFF/, "").split(/\r?\n/)[0].toLowerCase();
-        if (first.indexOf("student") < 0 || first.indexOf("feeling") < 0) {
-          setMessage("This file does not look like a CLEAR week. Choose CLEAR.CSV from the teacher device.", true);
-          return;
-        }
-        var rows = parseCsv(text);
-        var events = eventsIn(rows);
-        var times = datedEvents(events).map(function (item) { return item.when; }).sort(function (a, b) { return a - b; });
-        var id = file.name;
-        var name = file.name.replace(/\.csv$/i, "");
-        if (times.length) {
-          id = dayKey(times[0]) + "_" + dayKey(times[times.length - 1]);
-          name = rangeLabel(times[0], times[times.length - 1]);
-        }
-        var weeks = loadWeeks().filter(function (week) { return week.id !== id; });
-        weeks.push({ id: id, name: name, savedAt: new Date().toISOString(), rows: rows });
-        weeks.sort(function (a, b) { return weekSortKey(a).localeCompare(weekSortKey(b)); });
-        try {
-          storeWeeks(weeks);
-        } catch (err) {
-          setMessage("This browser could not keep the week.", true);
-          return;
-        }
-        setMessage(name + " is on the page. " + events.length + (events.length === 1 ? " selection." : " selections."), false);
-        render();
+        drawingReadPromise.then(function () {
+          if (!drawingsReady) return;
+          importWeekText(file, text);
+        });
+      };
+      reader.onerror = function () {
+        setMessage("Could not read the selected week file.", true);
       };
       reader.readAsText(file);
+    }
+
+    function importWeekText(file, text) {
+      var first = text.replace(/^\uFEFF/, "").split(/\r?\n/)[0].toLowerCase();
+      if (first.indexOf("student") < 0 || first.indexOf("feeling") < 0) {
+        setMessage("This file does not look like a CLEAR week. Choose CLEAR.CSV from the teacher device.", true);
+        return;
+      }
+      var rows = parseCsv(text);
+      var events = eventsIn(rows);
+      var times = datedEvents(events).map(function (item) { return item.when; }).sort(function (a, b) { return a - b; });
+      var id = file.name;
+      var name = file.name.replace(/\.csv$/i, "");
+      if (times.length) {
+        id = dayKey(times[0]) + "_" + dayKey(times[times.length - 1]);
+        name = rangeLabel(times[0], times[times.length - 1]);
+      }
+      var savedWeeks = loadWeeks();
+      var existing = savedWeeks.filter(function (week) { return week.id === id; })[0];
+      var weeks = savedWeeks.filter(function (week) { return week.id !== id; });
+      weeks.push({
+        id: id,
+        name: name,
+        savedAt: new Date().toISOString(),
+        rows: rows,
+        drawings: pendingDrawings.length
+          ? pendingDrawings
+          : (existing && existing.drawings ? existing.drawings : [])
+      });
+      weeks.sort(function (a, b) { return weekSortKey(a).localeCompare(weekSortKey(b)); });
+      try {
+        storeWeeks(weeks);
+      } catch (err) {
+        setMessage("This browser could not keep the week and drawings. Remove older weeks or drawings and try again.", true);
+        return;
+      }
+      var drawingCount = pendingDrawings.length;
+      pendingDrawings = [];
+      document.getElementById("drawings").value = "";
+      var message = name + " is on the page. " + events.length +
+        (events.length === 1 ? " selection." : " selections.");
+      if (drawingCount) {
+        message += " " + drawingCount + (drawingCount === 1 ? " drawing was" : " drawings were") + " saved with the week.";
+      }
+      setMessage(message, false);
+      render();
+    }
+
+    function readDrawingFiles(files) {
+      drawingsReady = false;
+      drawingReadPromise = Promise.all(files.map(function (file) {
+        return new Promise(function (resolve, reject) {
+          var reader = new FileReader();
+          reader.onerror = function () { reject(new Error("Could not read " + file.name + ".")); };
+          reader.onload = function () {
+            try {
+              resolve(sanitizeDrawingSvg(String(reader.result || ""), file.name));
+            } catch (err) {
+              reject(err);
+            }
+          };
+          reader.readAsText(file);
+        });
+      })).then(function (drawings) {
+        pendingDrawings = drawings;
+        drawingsReady = true;
+        if (drawings.length) {
+          setMessage(drawings.length + (drawings.length === 1 ? " drawing is" : " drawings are") +
+            " ready. Choose CLEAR.CSV to save them with that week.", false);
+        }
+      }).catch(function (err) {
+        pendingDrawings = [];
+        drawingsReady = false;
+        setMessage(err.message || "Could not read the student drawings.", true);
+      });
     }
 
     function render() {
@@ -707,13 +926,38 @@
         item.appendChild(remove);
         list.appendChild(item);
       });
+      renderDrawingGallery(weeks);
     }
 
     var fileInput = document.getElementById("file");
+    var drawingInput = document.getElementById("drawings");
     var drop = document.getElementById("drop");
     fileInput.addEventListener("change", function () {
       takeFile(fileInput.files && fileInput.files[0]);
       fileInput.value = "";
+    });
+    drawingInput.addEventListener("change", function () {
+      var files = Array.prototype.slice.call(drawingInput.files || []);
+      if (!files.length) {
+        pendingDrawings = [];
+        drawingsReady = true;
+        drawingReadPromise = Promise.resolve();
+        return;
+      }
+      var totalBytes = files.reduce(function (total, file) {
+        return total + file.size;
+      }, 0);
+      if (files.length > 64 || totalBytes > 1500000) {
+        pendingDrawings = [];
+        drawingsReady = false;
+        drawingReadPromise = Promise.resolve();
+        setMessage("Choose no more than 64 drawing files totaling 1.5 MB.", true);
+        return;
+      }
+      readDrawingFiles(files);
+    });
+    document.getElementById("drawing-student").addEventListener("change", function () {
+      renderDrawingGallery(weeksToShow());
     });
     ["dragenter", "dragover"].forEach(function (name) {
       drop.addEventListener(name, function (event) {
