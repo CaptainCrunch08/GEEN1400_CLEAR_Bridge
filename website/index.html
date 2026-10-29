@@ -3,124 +3,206 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>CLEAR weeks</title>
+  <title>CLEAR</title>
   <style>
     :root {
       color-scheme: light;
-      --bg: #f4efe4;
-      --ink: #2a2418;
-      --card: #fffdf8;
-      --line: #e2d8c6;
-      --green: #2f7d4a;
-      --orange: #c56a22;
-      --muted: #6d6254;
+      --paper: #f3ecdf;
+      --ink: #243028;
+      --muted: #5d6a60;
+      --card: #fffaf3;
+      --line: #e4d7c4;
+      --green: #2f6b4f;
+      --leaf: #7ea36a;
+      --orange: #d17a32;
+      --gold: #e7c98a;
+      --sky: #e7f0ea;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: Georgia, "Iowan Old Style", serif;
-      background: var(--bg);
       color: var(--ink);
+      background:
+        radial-gradient(circle at top left, #fff 0, transparent 28%),
+        linear-gradient(180deg, #f7f3ea 0%, var(--paper) 40%, #efe4d2 100%);
+      font-family: "Segoe UI", "Trebuchet MS", sans-serif;
+      min-height: 100vh;
     }
-    main {
-      max-width: 880px;
-      margin: 0 auto;
-      padding: 32px 20px 64px;
+    main { max-width: 980px; margin: 0 auto; padding: 28px 20px 72px; }
+    header { display: flex; gap: 14px; align-items: center; margin-bottom: 22px; }
+    .mark {
+      width: 54px; height: 54px; border-radius: 18px;
+      background: var(--green); color: white;
+      display: grid; place-items: center;
+      font-weight: 700; font-size: 1.4rem;
     }
-    h1 { font-size: 2rem; margin: 0 0 8px; }
-    h2 { font-size: 1.25rem; margin: 0 0 12px; }
-    p { line-height: 1.45; }
-    .lede { color: var(--muted); margin-top: 0; }
-    section {
+    .kicker { margin: 0; letter-spacing: 0.08em; text-transform: uppercase; font-size: 0.78rem; color: var(--muted); }
+    h1 { margin: 0; font-size: 2.2rem; letter-spacing: -0.03em; }
+    h2 { margin: 0 0 8px; font-size: 1.25rem; }
+    p { line-height: 1.5; }
+    .drop, .panel {
       background: var(--card);
       border: 1px solid var(--line);
-      border-radius: 12px;
-      padding: 18px 18px 8px;
-      margin: 16px 0;
+      border-radius: 22px;
+      padding: 22px;
+      margin: 14px 0;
+      box-shadow: 0 10px 30px #2430280d;
     }
-    label { display: block; font-size: 0.95rem; margin: 10px 0 4px; }
-    input[type="text"], input[type="file"] { font: inherit; }
-    input[type="text"] {
-      width: 100%;
-      max-width: 360px;
-      padding: 8px 10px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: white;
-    }
-    button {
-      font: inherit;
-      margin: 12px 8px 12px 0;
-      padding: 8px 14px;
-      border-radius: 8px;
-      border: 1px solid var(--ink);
-      background: var(--ink);
+    .drop.over { outline: 3px solid var(--leaf); background: var(--sky); }
+    .pick {
+      position: relative;
+      display: inline-block;
+      margin-top: 8px;
+      padding: 12px 18px;
+      border-radius: 999px;
+      background: var(--green);
       color: white;
+      font-weight: 650;
       cursor: pointer;
     }
-    button.quiet {
-      background: white;
-      color: var(--ink);
-    }
+    .pick input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
     .message { min-height: 1.4em; color: var(--green); }
     .message.bad { color: #9a3412; }
-    ul { list-style: none; padding: 0; }
-    li.week {
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      align-items: center;
-      border-top: 1px solid var(--line);
-      padding: 10px 0;
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+    .card { background: var(--sky); border-radius: 18px; padding: 16px; }
+    .card span { display: block; color: var(--muted); font-size: 0.9rem; }
+    .card strong { display: block; margin-top: 6px; font-size: 1.45rem; line-height: 1.2; }
+    .notes { margin: 8px 0 0; padding-left: 18px; }
+    .notes li { margin: 6px 0; }
+    .reflection { margin: 14px 0 0; padding-top: 12px; border-top: 1px solid var(--line); }
+    .chart-grid { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 14px; }
+    .columns {
+      display: flex; align-items: flex-end; gap: 4px;
+      height: 190px; padding-bottom: 4px;
     }
-    .bars { margin: 0 0 16px; }
-    .row { display: grid; grid-template-columns: 140px 1fr 36px; gap: 8px; align-items: center; margin: 6px 0; }
-    .track { background: #efe6d6; border-radius: 6px; height: 14px; }
-    .fill { height: 14px; border-radius: 6px; background: var(--green); }
+    .col { flex: 1 1 0; min-width: 0; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; }
+    .col .bar {
+      width: 100%; max-width: 26px; border-radius: 10px 10px 4px 4px;
+      background: linear-gradient(#a9cb90, var(--green)); min-height: 4px;
+    }
+    .col span { margin-top: 6px; font-size: 0.68rem; line-height: 1.15; color: var(--muted); text-align: center; }
+    .row { display: grid; grid-template-columns: 148px 1fr 36px; gap: 8px; align-items: center; margin: 8px 0; }
+    .track { background: #efe6d6; border-radius: 999px; height: 14px; overflow: hidden; }
+    .fill { height: 14px; border-radius: 999px; background: var(--green); }
     .fill.ask { background: var(--orange); }
-    table { width: 100%; border-collapse: collapse; font-size: 0.95rem; margin-bottom: 12px; }
-    th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
-    th { color: var(--muted); font-weight: normal; }
+    .split { display: flex; height: 22px; border-radius: 999px; overflow: hidden; background: #efe6d6; }
+    .split span { display: block; height: 100%; }
+    .legend { display: flex; gap: 14px; color: var(--muted); font-size: 0.9rem; margin-top: 8px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
+    th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; }
+    .weeks { list-style: none; padding: 0; margin: 0; }
+    .weeks li { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
+    button.quiet {
+      font: inherit; border: 1px solid var(--line); background: white; color: var(--ink);
+      border-radius: 999px; padding: 6px 12px; cursor: pointer;
+    }
     .empty { color: var(--muted); }
+    @media (max-width: 720px) {
+      .chart-grid { grid-template-columns: 1fr; }
+      h1 { font-size: 1.8rem; }
+    }
   </style>
 </head>
 <body>
   <main>
-    <h1>CLEAR weeks</h1>
-    <p class="lede">Plug the teacher device into this computer and copy <code>CLEAR.CSV</code> from the drive that appears. Each week stays in this browser. Trends use every week that is still saved, including the time of day a student sent each selection. Removing a week here does not erase the device.</p>
-
-    <section>
-      <h2>Import a week</h2>
-      <label for="file">Week file</label>
-      <input id="file" type="file" accept=".csv,text/csv">
-      <label for="name">Week name</label>
-      <input id="name" type="text" maxlength="40" placeholder="Week of Oct 24">
+    <header>
+      <div class="mark" aria-hidden="true">C</div>
       <div>
-        <button id="save" type="button">Save this week</button>
+        <p class="kicker">Classroom check-in</p>
+        <h1>CLEAR</h1>
       </div>
+    </header>
+
+    <section class="drop" id="drop">
+      <h2>Add a week from the teacher device</h2>
+      <p>Sample weeks are already on this page, so the graphs can be shown before a device is plugged in. When you have a real week, choose <strong>CLEAR.CSV</strong>. It is added beside the samples, and it stays in this browser.</p>
+      <label class="pick">Choose CLEAR.CSV
+        <input id="file" type="file" accept=".csv,text/csv">
+      </label>
       <p id="message" class="message"></p>
     </section>
 
-    <section>
-      <h2>Saved weeks</h2>
-      <ul id="weeks"></ul>
-    </section>
-
-    <section>
-      <h2>Trends</h2>
-      <div id="trends"></div>
-    </section>
-
-    <section>
-      <h2>One week</h2>
-      <label for="which">Look at</label>
-      <select id="which"></select>
-      <div id="detail"></div>
+    <section class="panel" id="summary"></section>
+    <section class="panel" id="days"></section>
+    <div class="chart-grid">
+      <section class="panel" id="hours"></section>
+      <section class="panel" id="kinds"></section>
+    </div>
+    <div class="chart-grid">
+      <section class="panel" id="feelings"></section>
+      <section class="panel" id="students"></section>
+    </div>
+    <section class="panel" id="recent"></section>
+    <section class="panel">
+      <h2>Weeks on this page</h2>
+      <p id="example-note" class="empty"></p>
+      <ul class="weeks" id="weeks"></ul>
     </section>
   </main>
   <script>
     var STORAGE_KEY = "clear-weeks";
-    var pendingRows = null;
+    var HIDE_KEY = "clear-hidden-examples";
+
+    // One sample class, four finished school weeks. day is Mon=0 … Fri=4.
+    // Feelings and choices match the student panel. kind is ask or try.
+    // The last number, when present, is how many minutes the reply took.
+    var SAMPLE_WEEKS = [
+      [
+        ["Avery", "Bored", "Quiet looking game", "try", "", 0, 8, 15],
+        ["Connor", "Bored", "Quiet looking game", "try", "", 0, 10, 40],
+        ["Sam", "Bored", "Draw how I feel", "try", "", 1, 8, 40],
+        ["Sam", "Uncomfortable", "I need a walk", "ask", "yes", 1, 14, 20, 4],
+        ["Maya", "I don't get it", "Draw the problem", "try", "", 2, 9, 5],
+        ["Avery", "Mad", "Help me cool down", "try", "", 2, 13, 10],
+        ["Jordan", "I don't get it", "Please say that again", "ask", "yes", 3, 9, 25, 6],
+        ["Luis", "Worried", "Breathing", "try", "", 4, 10, 10]
+      ],
+      [
+        ["Maya", "I don't get it", "Explain this question", "ask", "yes", 0, 8, 20, 3],
+        ["Avery", "I don't get it", "Draw the problem", "try", "", 0, 9, 15],
+        ["Jordan", "I don't get it", "Can we practice one?", "ask", "yes", 1, 8, 50, 5],
+        ["Sam", "Worried", "Help me calm down", "try", "", 1, 10, 5],
+        ["Luis", "I don't get it", "Please say that again", "ask", "no", 2, 9, 40, 8],
+        ["Maya", "Bored", "Quiet looking game", "try", "", 2, 11, 10],
+        ["Connor", "Worried", "Breathing", "try", "", 3, 10, 30],
+        ["Avery", "Uncomfortable", "Please help me", "ask", "yes", 3, 13, 5, 4],
+        ["Jordan", "Mad", "Breathing", "try", "", 4, 11, 45],
+        ["Luis", "Bored", "Draw how I feel", "try", "", 4, 13, 40],
+        ["Sam", "I don't get it", "Can we practice one?", "ask", "yes", 4, 14, 15, 6],
+        ["Connor", "Mad", "Help me cool down", "try", "", 4, 14, 50]
+      ],
+      [
+        ["Avery", "Worried", "Talk to someone", "ask", "yes", 0, 8, 25, 5],
+        ["Sam", "Mad", "I need a walk", "ask", "yes", 1, 8, 55, 4],
+        ["Sam", "Mad", "Help me cool down", "try", "", 1, 14, 35],
+        ["Maya", "I don't get it", "Please say that again", "ask", "yes", 2, 9, 20, 6],
+        ["Connor", "I don't get it", "Draw the problem", "try", "", 2, 10, 45],
+        ["Jordan", "Bored", "Quiet looking game", "try", "", 3, 9, 50],
+        ["Avery", "Uncomfortable", "Can I see an example?", "ask", "no", 3, 13, 20, 9],
+        ["Luis", "Worried", "Help me calm down", "try", "", 4, 10, 15],
+        ["Maya", "Bored", "Draw how I feel", "try", "", 4, 14, 0]
+      ],
+      [
+        ["Avery", "Worried", "Help me calm down", "try", "", 0, 8, 10],
+        ["Maya", "Worried", "Talk to someone", "ask", "yes", 0, 8, 50, 8],
+        ["Avery", "Worried", "Breathing", "try", "", 0, 10, 25],
+        ["Sam", "Worried", "Breathing", "try", "", 1, 8, 30],
+        ["Jordan", "Worried", "I need a walk", "ask", "yes", 1, 9, 15, 10],
+        ["Connor", "Worried", "Help me calm down", "try", "", 1, 10, 5],
+        ["Luis", "Worried", "Talk after class", "ask", "", 2, 9, 40],
+        ["Maya", "Worried", "Write my own words", "ask", "", 2, 11, 20],
+        ["Sam", "I don't get it", "Please say that again", "ask", "yes", 3, 10, 50, 14],
+        ["Jordan", "I don't get it", "Explain this question", "ask", "yes", 3, 11, 45, 18],
+        ["Maya", "I don't get it", "Draw the problem", "try", "", 3, 15, 0],
+        ["Luis", "Mad", "Help me cool down", "try", "", 4, 13, 10],
+        ["Connor", "Bored", "Quiet looking game", "try", "", 4, 13, 35],
+        ["Avery", "Uncomfortable", "Please help me", "ask", "yes", 4, 14, 5, 9],
+        ["Sam", "Mad", "I need a walk", "ask", "no", 4, 14, 30, 22],
+        ["Jordan", "Bored", "Draw how I feel", "try", "", 4, 15, 20]
+      ]
+    ];
 
     function loadWeeks() {
       try {
@@ -135,10 +217,104 @@
       localStorage.setItem(STORAGE_KEY, JSON.stringify(weeks));
     }
 
+    function hiddenExampleIds() {
+      try {
+        var saved = JSON.parse(sessionStorage.getItem(HIDE_KEY) || "[]");
+        return Array.isArray(saved) ? saved : [];
+      } catch (err) {
+        return [];
+      }
+    }
+
+    function startOfDay(date) {
+      return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    }
+
+    function addDays(date, count) {
+      var next = new Date(date.getTime());
+      next.setDate(next.getDate() + count);
+      return next;
+    }
+
+    // The last four finished Monday–Friday weeks, oldest first.
+    // A week that is still in progress is left out so every sample day is full.
+    function completedSchoolWeeks(count) {
+      var today = startOfDay(new Date());
+      var day = today.getDay();
+      var back = day === 6 ? 1 : day === 0 ? 2 : day === 5 ? 7 : day + 2;
+      var friday = addDays(today, -back);
+      var weeks = [];
+      for (var w = count - 1; w >= 0; w--) {
+        var thisFriday = addDays(friday, -7 * w);
+        var monday = addDays(thisFriday, -4);
+        var days = [];
+        for (var i = 0; i < 5; i++) days.push(addDays(monday, i));
+        weeks.push(days);
+      }
+      return weeks;
+    }
+
+    function weekSortKey(week) {
+      var match = String(week.id).match(/(\d{4}-\d{2}-\d{2})$/);
+      return match ? match[1] : String(week.id);
+    }
+
+    function exampleWeeks() {
+      var calendars = completedSchoolWeeks(SAMPLE_WEEKS.length);
+      return SAMPLE_WEEKS.map(function (plan, weekIndex) {
+        var days = calendars[weekIndex];
+        var rows = plan.map(function (item, rowIndex) {
+          var when = new Date(days[item[5]].getFullYear(), days[item[5]].getMonth(), days[item[5]].getDate(), item[6], item[7], 0);
+          var sent = Math.floor(when.getTime() / 1000);
+          var delayMin = Number(item[8]);
+          var answered = "";
+          if ((item[4] === "yes" || item[4] === "no") && delayMin > 0) {
+            answered = String(sent + Math.round(delayMin * 60));
+          }
+          return {
+            id: "sample-" + weekIndex + "-" + rowIndex,
+            time_sent: String(sent),
+            student: item[0],
+            feeling: item[1],
+            choice: item[2],
+            kind: item[3],
+            teacher_response: item[4],
+            time_answered: answered
+          };
+        });
+        return {
+          id: "example-" + dayKey(days[0]) + "_" + dayKey(days[4]),
+          name: "Example · " + rangeLabel(days[0], days[4]),
+          example: true,
+          savedAt: new Date().toISOString(),
+          rows: rows
+        };
+      });
+    }
+
+    function weeksToShow() {
+      var hidden = hiddenExampleIds();
+      var weeks = loadWeeks().slice();
+      exampleWeeks().forEach(function (week) {
+        if (hidden.indexOf(week.id) >= 0) return;
+        var already = weeks.some(function (saved) { return saved.id === week.id; });
+        if (!already) weeks.push(week);
+      });
+      weeks.sort(function (a, b) { return weekSortKey(a).localeCompare(weekSortKey(b)); });
+      return weeks;
+    }
+
     function setMessage(text, bad) {
       var el = document.getElementById("message");
       el.textContent = text;
       el.className = bad ? "message bad" : "message";
+    }
+
+    function escapeHtml(text) {
+      return String(text)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
     }
 
     function parseCsv(text) {
@@ -151,28 +327,17 @@
         var c = text.charAt(i);
         if (quoted) {
           if (c === '"') {
-            if (text.charAt(i + 1) === '"') {
-              field += '"';
-              i++;
-            } else {
-              quoted = false;
-            }
-          } else {
-            field += c;
-          }
-        } else if (c === '"') {
-          quoted = true;
-        } else if (c === ",") {
-          row.push(field);
-          field = "";
-        } else if (c === "\n") {
+            if (text.charAt(i + 1) === '"') { field += '"'; i++; }
+            else quoted = false;
+          } else field += c;
+        } else if (c === '"') quoted = true;
+        else if (c === ",") { row.push(field); field = ""; }
+        else if (c === "\n") {
           row.push(field);
           field = "";
           if (row.join("").trim() !== "") rows.push(row);
           row = [];
-        } else if (c !== "\r") {
-          field += c;
-        }
+        } else if (c !== "\r") field += c;
       }
       if (field.length || row.length) {
         row.push(field);
@@ -182,15 +347,11 @@
       var header = rows[0].map(function (cell) { return cell.trim(); });
       return rows.slice(1).map(function (cols) {
         var item = {};
-        header.forEach(function (name, index) {
-          item[name] = (cols[index] || "").trim();
-        });
+        header.forEach(function (name, index) { item[name] = (cols[index] || "").trim(); });
         return item;
       });
     }
 
-    // A selection and its later Yes or No share an id. Keep one event,
-    // the earliest second, and the answer if the teacher gave one.
     function eventsIn(rows) {
       var byId = {};
       var order = [];
@@ -200,24 +361,43 @@
         if (!prev) {
           byId[id] = {
             id: id,
-            seconds_on: row.seconds_on || "",
             time_sent: row.time_sent || "",
             student: row.student || "",
             feeling: row.feeling || "",
             choice: row.choice || "",
             kind: row.kind || "",
-            teacher_response: row.teacher_response || ""
+            teacher_response: row.teacher_response || "",
+            time_answered: row.time_answered || ""
           };
           order.push(id);
           return;
         }
         if (row.teacher_response) prev.teacher_response = row.teacher_response;
+        if (row.time_answered) prev.time_answered = row.time_answered;
         if (row.time_sent && !prev.time_sent) prev.time_sent = row.time_sent;
-        var a = Number(prev.seconds_on);
-        var b = Number(row.seconds_on);
-        if (!isNaN(a) && !isNaN(b) && b < a) prev.seconds_on = String(b);
       });
       return order.map(function (id) { return byId[id]; });
+    }
+
+    function eventDate(event) {
+      var n = Number(event.time_sent);
+      if (!event.time_sent || isNaN(n) || n < 1000000000) return null;
+      return new Date(n * 1000);
+    }
+
+    function pad(n) { return n < 10 ? "0" + n : String(n); }
+
+    function dayKey(date) {
+      return date.getFullYear() + "-" + pad(date.getMonth() + 1) + "-" + pad(date.getDate());
+    }
+
+    function shortDate(date) {
+      return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    }
+
+    function rangeLabel(start, end) {
+      if (dayKey(start) === dayKey(end)) return shortDate(start);
+      return shortDate(start) + " – " + shortDate(end);
     }
 
     function countBy(events, pick) {
@@ -231,83 +411,6 @@
       }).sort(function (a, b) { return b.count - a.count; });
     }
 
-    function barList(title, items, ask) {
-      var max = 1;
-      items.forEach(function (item) { if (item.count > max) max = item.count; });
-      var html = "<h3>" + title + "</h3><div class='bars'>";
-      if (!items.length) return html + "<p class='empty'>Nothing saved yet.</p></div>";
-      items.forEach(function (item) {
-        var width = Math.round(item.count * 100 / max);
-        html += "<div class='row'><span>" + escapeHtml(item.label) + "</span>";
-        html += "<div class='track'><div class='fill" + (ask ? " ask" : "") + "' style='width:" + width + "%'></div></div>";
-        html += "<span>" + item.count + "</span></div>";
-      });
-      return html + "</div>";
-    }
-
-    function escapeHtml(text) {
-      return String(text)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;");
-    }
-
-    function eventDate(event) {
-      var n = Number(event.time_sent);
-      if (!event.time_sent || isNaN(n) || n < 1000000000) return null;
-      return new Date(n * 1000);
-    }
-
-    function formatWhen(event) {
-      var when = eventDate(event);
-      if (!when) return "";
-      return when.toLocaleString();
-    }
-
-    function timeOfDayBars(events) {
-      var counts = [];
-      var any = false;
-      for (var hour = 0; hour < 24; hour++) counts[hour] = 0;
-      events.forEach(function (event) {
-        var when = eventDate(event);
-        if (!when) return;
-        any = true;
-        counts[when.getHours()]++;
-      });
-      if (!any) {
-        return "<h3>Time of day</h3><p class='empty'>No send times in the saved weeks yet.</p>";
-      }
-      var items = [];
-      for (var h = 0; h < 24; h++) {
-        if (!counts[h]) continue;
-        var label = (h % 12 || 12) + (h < 12 ? " AM" : " PM");
-        items.push({ label: label, count: counts[h] });
-      }
-      return barList("Time of day", items, false);
-    }
-
-    function dayBars(events) {
-      var counts = {};
-      var order = [];
-      events.forEach(function (event) {
-        var when = eventDate(event);
-        if (!when) return;
-        var key = when.toLocaleDateString();
-        if (!counts[key]) {
-          counts[key] = 0;
-          order.push(key);
-        }
-        counts[key]++;
-      });
-      var items = order.map(function (key) {
-        return { label: key, count: counts[key] };
-      });
-      if (!items.length) {
-        return "<h3>Selections by day</h3><p class='empty'>No send times in the saved weeks yet.</p>";
-      }
-      return barList("Selections by day", items, false);
-    }
-
     function allEvents(weeks) {
       var events = [];
       weeks.forEach(function (week) {
@@ -319,156 +422,315 @@
       return events;
     }
 
-    function render() {
-      var weeks = loadWeeks();
-      var weekList = document.getElementById("weeks");
-      weekList.innerHTML = "";
-      if (!weeks.length) {
-        weekList.innerHTML = "<li class='empty'>No weeks saved in this browser yet.</li>";
-      }
-      weeks.forEach(function (week) {
-        var count = eventsIn(week.rows).length;
-        var item = document.createElement("li");
-        item.className = "week";
-        var label = document.createElement("span");
-        label.textContent = week.name + " — " + count + (count === 1 ? " selection" : " selections");
-        var remove = document.createElement("button");
-        remove.type = "button";
-        remove.className = "quiet";
-        remove.textContent = "Remove";
-        remove.addEventListener("click", function () {
-          if (!window.confirm("Remove " + week.name + " from this browser?")) return;
-          storeWeeks(loadWeeks().filter(function (saved) { return saved.name !== week.name; }));
-          render();
-        });
-        item.appendChild(label);
-        item.appendChild(remove);
-        weekList.appendChild(item);
-      });
-
-      var events = allEvents(weeks);
-      var feelings = countBy(events, function (event) { return event.feeling; });
-      var students = countBy(events, function (event) { return event.student; });
-      var kinds = countBy(events, function (event) {
-        if (event.kind === "ask") return "Ask teacher";
-        if (event.kind === "try") return "Try this";
-        return event.kind;
-      });
-      var answers = countBy(events.filter(function (event) { return event.kind === "ask"; }), function (event) {
-        if (event.teacher_response === "yes") return "Yes";
-        if (event.teacher_response === "no") return "No";
-        return "Still waiting";
-      });
-      var byWeek = weeks.map(function (week) {
-        return { label: week.name, count: eventsIn(week.rows).length };
-      });
-      var trends = document.getElementById("trends");
-      trends.innerHTML = barList("Selections each week", byWeek, false)
-        + dayBars(events)
-        + timeOfDayBars(events)
-        + barList("Feelings", feelings, false)
-        + barList("Students", students, false)
-        + barList("Try this or ask", kinds, false)
-        + barList("Teacher answers on asks", answers, true);
-
-      var which = document.getElementById("which");
-      var previous = which.value;
-      which.innerHTML = "";
-      weeks.forEach(function (week) {
-        var option = document.createElement("option");
-        option.value = week.name;
-        option.textContent = week.name;
-        which.appendChild(option);
-      });
-      if (previous && weeks.some(function (week) { return week.name === previous; })) {
-        which.value = previous;
-      } else if (weeks.length) {
-        which.value = weeks[weeks.length - 1].name;
-      }
-      renderDetail();
+    function datedEvents(events) {
+      return events.map(function (event) {
+        return { event: event, when: eventDate(event) };
+      }).filter(function (item) { return item.when; });
     }
 
-    function renderDetail() {
-      var detail = document.getElementById("detail");
-      var weeks = loadWeeks();
-      var name = document.getElementById("which").value;
-      var week = null;
-      weeks.forEach(function (item) { if (item.name === name) week = item; });
-      if (!week) {
-        detail.innerHTML = "<p class='empty'>Import a week to see its rows. Seconds start over each time the teacher device powers on. The week name is what keeps the files apart.</p>";
-        return;
-      }
-      var events = eventsIn(week.rows);
-      var html = "<table><thead><tr><th>When</th><th>Student</th><th>Feeling</th><th>Choice</th><th>Kind</th><th>Teacher</th></tr></thead><tbody>";
+    // Minutes from the request to Yes or No. Tries are not replies.
+    // A missing time, a clock that ran backward, or a gap longer than
+    // a school day is left out so one bad stamp cannot skew the typical time.
+    function replyMinutes(event) {
+      if (event.kind !== "ask") return null;
+      if (event.teacher_response !== "yes" && event.teacher_response !== "no") return null;
+      var sent = Number(event.time_sent);
+      var answered = Number(event.time_answered);
+      if (!sent || !answered || answered < sent) return null;
+      var minutes = (answered - sent) / 60;
+      if (minutes > 8 * 60) return null;
+      return minutes;
+    }
+
+    function median(values) {
+      if (!values.length) return null;
+      var sorted = values.slice().sort(function (a, b) { return a - b; });
+      var mid = Math.floor(sorted.length / 2);
+      if (sorted.length % 2) return sorted[mid];
+      return (sorted[mid - 1] + sorted[mid]) / 2;
+    }
+
+    function replyMinutesFor(events) {
+      var values = [];
       events.forEach(function (event) {
-        html += "<tr><td>" + escapeHtml(formatWhen(event) || event.seconds_on) + "</td><td>" + escapeHtml(event.student)
-          + "</td><td>" + escapeHtml(event.feeling) + "</td><td>" + escapeHtml(event.choice)
-          + "</td><td>" + escapeHtml(event.kind) + "</td><td>" + escapeHtml(event.teacher_response) + "</td></tr>";
+        var minutes = replyMinutes(event);
+        if (minutes != null) values.push(minutes);
       });
-      html += "</tbody></table>";
-      detail.innerHTML = html;
+      return median(values);
     }
 
-    document.getElementById("file").addEventListener("change", function (event) {
-      var file = event.target.files && event.target.files[0];
-      pendingRows = null;
-      if (!file) return;
-      var guessed = file.name.replace(/\.csv$/i, "").replace(/[_-]+/g, " ");
-      if (!document.getElementById("name").value) {
-        document.getElementById("name").value = guessed;
+    function formatMinutes(minutes) {
+      var rounded = Math.round(minutes);
+      if (rounded < 1) return "under 1 min";
+      if (rounded < 60) return rounded + " min";
+      var hours = Math.floor(rounded / 60);
+      var rest = rounded % 60;
+      if (!rest) return hours + " hr";
+      return hours + " hr " + rest + " min";
+    }
+
+    function replyPhrase(event) {
+      if (event.teacher_response !== "yes" && event.teacher_response !== "no") return "";
+      var minutes = replyMinutes(event);
+      if (minutes == null) return event.teacher_response;
+      return event.teacher_response + " · " + formatMinutes(minutes);
+    }
+
+    // A short after-class read of the class totals. It never names a student.
+    function afterClassNote(feelings, busiestPart, typical, latestTypical, previousTypical) {
+      var parts = [];
+      if (feelings[0]) parts.push(feelings[0].label + " is the pattern worth noticing across these weeks.");
+      if (busiestPart) parts.push("Check-ins gathered in " + busiestPart + ", a useful time to have a calm reply ready.");
+      if (typical != null) {
+        parts.push("When a student asked, a typical reply took " + formatMinutes(typical) + ".");
+        if (latestTypical != null && previousTypical != null && latestTypical > previousTypical + 0.5) {
+          parts.push("The newest week was slower to answer than the week before it.");
+        } else if (latestTypical != null && previousTypical != null && previousTypical > latestTypical + 0.5) {
+          parts.push("The newest week was quicker to answer than the week before it.");
+        }
       }
+      if (!parts.length) return "";
+      parts.push("This note is written on this computer from class totals. It does not name a student, and it is not sent anywhere.");
+      return parts.join(" ");
+    }
+
+    function partOfDay(date) {
+      var hour = date.getHours();
+      if (hour < 11) return "the morning";
+      if (hour < 13) return "the middle of the day";
+      if (hour < 16) return "the afternoon";
+      return "late in the day";
+    }
+
+    function bars(items, ask) {
+      var max = 1;
+      items.forEach(function (item) { if (item.count > max) max = item.count; });
+      if (!items.length) return "<p class='empty'>Nothing to show yet.</p>";
+      return items.map(function (item) {
+        var width = Math.max(4, Math.round(item.count * 100 / max));
+        return "<div class='row'><span>" + escapeHtml(item.label) + "</span><div class='track'><div class='fill" + (ask ? " ask" : "") + "' style='width:" + width + "%'></div></div><span>" + item.count + "</span></div>";
+      }).join("");
+    }
+
+    function columns(items) {
+      var max = 1;
+      items.forEach(function (item) { if (item.count > max) max = item.count; });
+      if (!items.length) return "<p class='empty'>No times in the file yet.</p>";
+      return "<div class='columns'>" + items.map(function (item) {
+        var height = Math.max(6, Math.round(item.count * 150 / max));
+        return "<div class='col'><div class='bar' style='height:" + height + "px' title='" + item.count + "'></div><span>" + escapeHtml(item.label) + "</span></div>";
+      }).join("") + "</div>";
+    }
+
+    function takeFile(file) {
+      if (!file) return;
       var reader = new FileReader();
       reader.onload = function () {
         var text = String(reader.result || "");
         var first = text.replace(/^\uFEFF/, "").split(/\r?\n/)[0].toLowerCase();
-        var rows = parseCsv(text);
         if (first.indexOf("student") < 0 || first.indexOf("feeling") < 0) {
-          pendingRows = null;
-          setMessage("This file does not look like a CLEAR week log.", true);
+          setMessage("This file does not look like a CLEAR week. Choose CLEAR.CSV from the teacher device.", true);
           return;
         }
-        pendingRows = rows;
-        var count = eventsIn(rows).length;
-        setMessage(count + (count === 1 ? " selection" : " selections") + " read. Save the week to keep them.", false);
+        var rows = parseCsv(text);
+        var events = eventsIn(rows);
+        var times = datedEvents(events).map(function (item) { return item.when; }).sort(function (a, b) { return a - b; });
+        var id = file.name;
+        var name = file.name.replace(/\.csv$/i, "");
+        if (times.length) {
+          id = dayKey(times[0]) + "_" + dayKey(times[times.length - 1]);
+          name = rangeLabel(times[0], times[times.length - 1]);
+        }
+        var weeks = loadWeeks().filter(function (week) { return week.id !== id; });
+        weeks.push({ id: id, name: name, savedAt: new Date().toISOString(), rows: rows });
+        weeks.sort(function (a, b) { return weekSortKey(a).localeCompare(weekSortKey(b)); });
+        try {
+          storeWeeks(weeks);
+        } catch (err) {
+          setMessage("This browser could not keep the week.", true);
+          return;
+        }
+        setMessage(name + " is on the page. " + events.length + (events.length === 1 ? " selection." : " selections."), false);
+        render();
       };
       reader.readAsText(file);
-    });
+    }
 
-    document.getElementById("save").addEventListener("click", function () {
-      var name = document.getElementById("name").value.trim();
-      if (!pendingRows) {
-        setMessage("Choose a CSV file first.", true);
-        return;
-      }
-      if (!name) {
-        setMessage("Give this week a name.", true);
-        return;
-      }
-      var weeks = loadWeeks();
-      var replaced = false;
-      weeks.forEach(function (week) {
-        if (week.name === name) {
-          if (!window.confirm(name + " is already saved. Replace its rows?")) return;
-          week.rows = pendingRows;
-          week.savedAt = new Date().toISOString();
-          replaced = true;
-        }
+    function render() {
+      var weeks = weeksToShow();
+      var events = allEvents(weeks);
+      var latest = weeks.length ? eventsIn(weeks[weeks.length - 1].rows) : [];
+      var previous = weeks.length > 1 ? eventsIn(weeks[weeks.length - 2].rows) : [];
+      var feelings = countBy(events, function (event) { return event.feeling; });
+      var students = countBy(events, function (event) { return event.student; });
+      var asks = events.filter(function (event) { return event.kind === "ask"; });
+      var tries = events.filter(function (event) { return event.kind === "try"; });
+      var typical = replyMinutesFor(events);
+      var latestTypical = replyMinutesFor(latest);
+      var previousTypical = replyMinutesFor(previous);
+      var dated = datedEvents(events);
+      var dayCounts = {};
+      var dayOrder = [];
+      dated.forEach(function (item) {
+        var key = dayKey(item.when);
+        if (!dayCounts[key]) { dayCounts[key] = { label: shortDate(item.when), count: 0, when: item.when }; dayOrder.push(key); }
+        dayCounts[key].count++;
       });
-      if (!replaced && weeks.some(function (week) { return week.name === name; })) return;
-      if (!replaced) {
-        weeks.push({ name: name, savedAt: new Date().toISOString(), rows: pendingRows });
-      }
-      try {
-        storeWeeks(weeks);
-      } catch (err) {
-        setMessage("This browser could not store the week.", true);
-        return;
-      }
-      setMessage(name + " is saved in this browser.", false);
-      render();
-    });
+      var dayItems = dayOrder.map(function (key) { return dayCounts[key]; });
+      var hourCounts = [];
+      for (var h = 7; h <= 16; h++) hourCounts.push({ hour: h, count: 0 });
+      datedEvents(events).forEach(function (item) {
+        var hour = item.when.getHours();
+        hourCounts.forEach(function (slot) { if (slot.hour === hour) slot.count++; });
+      });
+      var hourItems = hourCounts.filter(function (slot) { return slot.count > 0; }).map(function (slot) {
+        var label = (slot.hour % 12 || 12) + (slot.hour < 12 ? "a" : "p");
+        return { label: label, count: slot.count };
+      });
+      var partCounts = {};
+      datedEvents(events).forEach(function (item) {
+        var name = partOfDay(item.when);
+        partCounts[name] = (partCounts[name] || 0) + 1;
+      });
+      var busiestPart = Object.keys(partCounts).sort(function (a, b) { return partCounts[b] - partCounts[a]; })[0];
 
-    document.getElementById("which").addEventListener("change", renderDetail);
+      var notes = [];
+      var onlyExamples = weeks.length > 0 && weeks.every(function (week) { return week.example; });
+      if (!events.length) {
+        notes.push(hiddenExampleIds().length ? "The sample weeks are hidden. Show them again to walk through the graphs." : "Choose a week file and this page will describe what students needed.");
+      } else {
+        if (onlyExamples) notes.push("These are sample weeks, so the graphs can be shown before a teacher device is plugged in.");
+        notes.push(events.length + (events.length === 1 ? " selection is saved" : " selections are saved") + " across " + weeks.length + (weeks.length === 1 ? " week." : " weeks."));
+        if (feelings[0]) notes.push(feelings[0].label + " came up most often, " + feelings[0].count + (feelings[0].count === 1 ? " time." : " times."));
+        if (busiestPart) notes.push("Most of those moments were in " + busiestPart + ".");
+        if (typical != null) {
+          notes.push("A typical reply took " + formatMinutes(typical) + ".");
+          if (previous.length && latestTypical != null && previousTypical != null) {
+            if (latestTypical > previousTypical + 0.5) notes.push("Replies in the newest week took longer than the week before.");
+            else if (previousTypical > latestTypical + 0.5) notes.push("Replies in the newest week were quicker than the week before.");
+          }
+        }
+        if (previous.length) {
+          if (latest.length > previous.length) notes.push("The newest week had more selections than the week before it.");
+          else if (latest.length < previous.length) notes.push("The newest week had fewer selections than the week before it.");
+          else notes.push("The newest week had the same number of selections as the week before it.");
+          var latestTop = countBy(latest, function (event) { return event.feeling; })[0];
+          var previousCount = 0;
+          if (latestTop) {
+            previous.forEach(function (event) { if (event.feeling === latestTop.label) previousCount++; });
+            if (latestTop.count > previousCount) notes.push(latestTop.label + " showed up more often than in the week before.");
+            else if (latestTop.count < previousCount) notes.push(latestTop.label + " showed up less often than in the week before.");
+          }
+        }
+      }
+
+      document.getElementById("summary").innerHTML =
+        "<h2>What stands out</h2><div class='cards'>" +
+        "<div class='card'><span>Selections</span><strong>" + events.length + "</strong></div>" +
+        "<div class='card'><span>Students</span><strong>" + students.length + "</strong></div>" +
+        "<div class='card'><span>Most common feeling</span><strong>" + escapeHtml(feelings[0] ? feelings[0].label : "—") + "</strong></div>" +
+        "<div class='card'><span>Typical reply</span><strong>" + (typical == null ? "—" : escapeHtml(formatMinutes(typical))) + "</strong></div>" +
+        "</div><ul class='notes'>" + notes.map(function (line) { return "<li>" + escapeHtml(line) + "</li>"; }).join("") + "</ul>" +
+        (events.length ? "<p class='reflection'>" + escapeHtml(afterClassNote(feelings, busiestPart, typical, latestTypical, previousTypical)) + "</p>" : "");
+
+      document.getElementById("days").innerHTML = "<h2>Across the days</h2>" + columns(dayItems);
+      document.getElementById("hours").innerHTML = "<h2>Time of day</h2>" + columns(hourItems);
+      document.getElementById("feelings").innerHTML = "<h2>How students felt</h2>" + bars(feelings.slice(0, 6), false);
+      var kindTotal = Math.max(1, asks.length + tries.length);
+      document.getElementById("kinds").innerHTML =
+        "<h2>Tried it or asked</h2>" +
+        "<div class='split'><span style='width:" + Math.round(tries.length * 100 / kindTotal) + "%;background:var(--green)'></span><span style='width:" + Math.round(asks.length * 100 / kindTotal) + "%;background:var(--orange)'></span></div>" +
+        "<div class='legend'><span><i class='dot' style='background:var(--green)'></i>Try this " + tries.length + "</span><span><i class='dot' style='background:var(--orange)'></i>Ask " + asks.length + "</span></div>" +
+        bars(countBy(asks, function (event) {
+          if (event.teacher_response === "yes") return "Yes";
+          if (event.teacher_response === "no") return "No";
+          return "No reply";
+        }), true);
+      document.getElementById("students").innerHTML = "<h2>Who needed support</h2>" + bars(students.slice(0, 8), false);
+
+      var recent = datedEvents(events).sort(function (a, b) { return b.when - a.when; }).slice(0, 8);
+      var table = "<h2>Latest selections</h2>";
+      if (!recent.length) table += "<p class='empty'>The latest rows will show up here.</p>";
+      else {
+        table += "<table><thead><tr><th>When</th><th>Student</th><th>Feeling</th><th>Choice</th><th>Teacher</th></tr></thead><tbody>";
+        recent.forEach(function (item) {
+          table += "<tr><td>" + escapeHtml(item.when.toLocaleString()) + "</td><td>" + escapeHtml(item.event.student) + "</td><td>" + escapeHtml(item.event.feeling) + "</td><td>" + escapeHtml(item.event.choice) + "</td><td>" + escapeHtml(replyPhrase(item.event)) + "</td></tr>";
+        });
+        table += "</tbody></table>";
+      }
+      document.getElementById("recent").innerHTML = table;
+
+      var note = document.getElementById("example-note");
+      var hidden = hiddenExampleIds();
+      note.innerHTML = "";
+      if (weeks.some(function (week) { return week.example; })) {
+        note.textContent = "Weeks marked Example are a sample class. They are not from a teacher device. Hiding one lasts until this page is opened again.";
+      }
+      if (hidden.length) {
+        var restore = document.createElement("button");
+        restore.type = "button";
+        restore.className = "quiet";
+        restore.textContent = "Show sample weeks";
+        restore.addEventListener("click", function () {
+          sessionStorage.removeItem(HIDE_KEY);
+          setMessage("The sample weeks are back on the page.", false);
+          render();
+        });
+        note.appendChild(document.createTextNode(note.textContent ? " " : ""));
+        note.appendChild(restore);
+      }
+
+      var list = document.getElementById("weeks");
+      list.innerHTML = "";
+      if (!weeks.length) list.innerHTML = "<li class='empty'>No weeks yet.</li>";
+      weeks.slice().reverse().forEach(function (week) {
+        var item = document.createElement("li");
+        var label = document.createElement("span");
+        label.textContent = week.name + " — " + eventsIn(week.rows).length + " selections";
+        var remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "quiet";
+        remove.textContent = week.example ? "Hide" : "Remove";
+        remove.addEventListener("click", function () {
+          if (week.example) {
+            var nextHidden = hiddenExampleIds();
+            if (nextHidden.indexOf(week.id) < 0) nextHidden.push(week.id);
+            sessionStorage.setItem(HIDE_KEY, JSON.stringify(nextHidden));
+            setMessage(week.name + " is hidden until this page is opened again.", false);
+          } else {
+            storeWeeks(loadWeeks().filter(function (saved) { return saved.id !== week.id; }));
+            setMessage(week.name + " was removed from this browser.", false);
+          }
+          render();
+        });
+        item.appendChild(label);
+        item.appendChild(remove);
+        list.appendChild(item);
+      });
+    }
+
+    var fileInput = document.getElementById("file");
+    var drop = document.getElementById("drop");
+    fileInput.addEventListener("change", function () {
+      takeFile(fileInput.files && fileInput.files[0]);
+      fileInput.value = "";
+    });
+    ["dragenter", "dragover"].forEach(function (name) {
+      drop.addEventListener(name, function (event) {
+        event.preventDefault();
+        drop.classList.add("over");
+      });
+    });
+    ["dragleave", "drop"].forEach(function (name) {
+      drop.addEventListener(name, function (event) {
+        event.preventDefault();
+        drop.classList.remove("over");
+      });
+    });
+    drop.addEventListener("drop", function (event) {
+      var file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
+      takeFile(file);
+    });
     render();
   </script>
 </body>
