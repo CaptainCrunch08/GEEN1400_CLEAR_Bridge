@@ -1,0 +1,544 @@
+from flask import Flask, request, redirect, Response, render_template_string, url_for
+import sqlite3
+import csv
+import io
+from datetime import datetime
+
+app = Flask(__name__)
+DB = "students.db"
+
+
+# -------------------------
+# DATABASE
+# -------------------------
+
+def get_db():
+    db = sqlite3.connect(DB)
+    db.row_factory = sqlite3.Row
+    return db
+
+
+def current_school_year():
+    now = datetime.now()
+    start = now.year if now.month >= 8 else now.year - 1
+    return f"{start}-{start + 1}"
+
+
+def initialize_db():
+    with get_db() as db:
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                student TEXT NOT NULL,
+                issue TEXT NOT NULL,
+                details TEXT DEFAULT '',
+                request TEXT NOT NULL DEFAULT '',
+                scheduled_at TEXT NOT NULL DEFAULT '',
+                recorded_at TEXT NOT NULL,
+                school_year TEXT NOT NULL
+            )
+        """)
+
+        columns = {
+            row["name"]
+            for row in db.execute("PRAGMA table_info(records)")
+        }
+
+        if "request" not in columns:
+            db.execute("""
+                ALTER TABLE records
+                ADD COLUMN request TEXT NOT NULL DEFAULT ''
+            """)
+
+        if "scheduled_at" not in columns:
+            db.execute("""
+                ALTER TABLE records
+                ADD COLUMN scheduled_at TEXT NOT NULL DEFAULT ''
+            """)
+
+        if "details" not in columns:
+            db.execute("""
+                ALTER TABLE records
+                ADD COLUMN details TEXT DEFAULT ''
+            """)
+
+
+# -------------------------
+# HTML WEBSITE
+# -------------------------
+
+PAGE = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Student Support Tracker</title>
+<style>
+    body {
+        font-family: Arial, sans-serif;
+        max-width: 1200px;
+        margin: 30px auto;
+        padding: 0 16px;
+        background: #f2f5f7;
+        color: #222;
+    }
+    section {
+        background: white;
+        padding: 22px;
+        margin-bottom: 22px;
+        border-radius: 10px;
+        box-shadow: 0 2px 8px #0000000c;
+    }
+    input, select, textarea, button {
+        box-sizing: border-box;
+        width: 100%;
+        padding: 11px;
+        margin: 7px 0 15px;
+        font-size: 15px;
+    }
+    button {
+        border: 0;
+        border-radius: 5px;
+        background: #245b48;
+        color: white;
+        cursor: pointer;
+    }
+    button:hover { background: #194333; }
+    table {
+        border-collapse: collapse;
+        width: 100%;
+        min-width: 800px;
+    }
+    th, td {
+        border-bottom: 1px solid #ddd;
+        text-align: left;
+        padding: 10px;
+        overflow-wrap: anywhere;
+    }
+    th { background: #e9efec; }
+    .table-wrap { overflow-x: auto; }
+    .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 12px;
+    }
+    .actions {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 10px;
+    }
+    .actions a {
+        display: block;
+        text-align: center;
+        padding: 12px;
+        background: #245b48;
+        color: white;
+        text-decoration: none;
+        border-radius: 5px;
+    }
+    .muted { color: #555; font-size: 14px; }
+    .count { font-weight: bold; }
+</style>
+</head>
+<body>
+
+<h1>Student Support Tracker</h1>
+<p>School year: {{ school_year }}</p>
+<p class="muted">
+    Each submission is a separate record. Students can have multiple
+    issues and requests.
+</p>
+
+<section>
+    <h2>Add a student issue</h2>
+    <form method="POST" action="/add">
+        <div class="grid">
+            <div>
+                <label for="student">Student name or ID</label>
+                <input id="student" name="student"
+                       maxlength="150" required>
+            </div>
+            <div>
+                <label for="issue">Issue</label>
+                <select id="issue" name="issue" required>
+                    <option value="Academic difficulty">Academic difficulty</option>
+                    <option value="Technology issue">Technology issue</option>
+                    <option value="Behavioral concern">Behavioral concern</option>
+                    <option value="Emotional support">Emotional support</option>
+                    <option value="Attendance">Attendance</option>
+                    <option value="Other">Other</option>
+                </select>
+            </div>
+        </div>
+
+        <label for="request">Request / help needed</label>
+        <input id="request" name="request" maxlength="1000"
+               placeholder="What help is being requested?">
+
+        <label for="details">Additional details (optional)</label>
+        <textarea id="details" name="details" rows="3"
+                  maxlength="2000"></textarea>
+
+        <div class="grid">
+            <div>
+                <label for="scheduled_at">Scheduled date and time</label>
+                <input id="scheduled_at" name="scheduled_at"
+                       type="datetime-local">
+            </div>
+        </div>
+
+        <button type="submit">Save Student Record</button>
+    </form>
+</section>
+
+<section>
+    <h2>Import records from SanDisk / CSV</h2>
+    <p class="muted">
+        Required CSV columns:
+        student_name, issue, request, scheduled_at.
+        Date/time format: YYYY-MM-DD HH:MM.
+    </p>
+
+    <form method="POST" action="/import-csv"
+          enctype="multipart/form-data">
+        <label for="file">Select CSV file</label>
+        <input type="file" id="file" name="file"
+               accept=".csv" required>
+        <button type="submit">Import CSV Records</button>
+    </form>
+</section>
+
+<section>
+    <h2>Search and filter records</h2>
+    <form method="GET" action="/">
+        <div class="grid">
+            <div>
+                <label for="q">Student, issue, or request</label>
+                <input id="q" name="q" value="{{ q }}"
+                       placeholder="Search records">
+            </div>
+            <div>
+                <label for="year">School year</label>
+                <select id="year" name="year">
+                    <option value="">All school years</option>
+                    {% for y in years %}
+                    <option value="{{ y }}"
+                        {% if y == selected_year %}selected{% endif %}>
+                        {{ y }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        <button type="submit">Search Records</button>
+    </form>
+
+    <div class="actions">
+        <a href="{{ url_for('export', q=q, year=selected_year) }}">
+            Download Filtered CSV
+        </a>
+        <a href="{{ url_for('export') }}">Download All Records</a>
+    </div>
+</section>
+
+<section>
+    <h2>Student records</h2>
+    <p class="count">{{ records|length }} records shown</p>
+
+    <div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>Scheduled date/time</th>
+                <th>Student</th>
+                <th>Issue</th>
+                <th>Request</th>
+                <th>Details</th>
+                <th>School year</th>
+                <th>Recorded at</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for r in records %}
+            <tr>
+                <td>{{ r['scheduled_at'] or 'Not scheduled' }}</td>
+                <td>{{ r['student'] }}</td>
+                <td>{{ r['issue'] }}</td>
+                <td>{{ r['request'] or '' }}</td>
+                <td>{{ r['details'] or '' }}</td>
+                <td>{{ r['school_year'] }}</td>
+                <td>{{ r['recorded_at'] }}</td>
+            </tr>
+        {% else %}
+            <tr>
+                <td colspan="7">No records found.</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</section>
+
+</body>
+</html>
+"""
+
+
+# -------------------------
+# HOME PAGE / SEARCH
+# -------------------------
+
+@app.route("/")
+def home():
+    q = request.args.get("q", "").strip()
+    selected_year = request.args.get("year", "").strip()
+
+    sql = "SELECT * FROM records WHERE 1=1"
+    params = []
+
+    if q:
+        pattern = f"%{q}%"
+        sql += """
+            AND (
+                student LIKE ? OR issue LIKE ?
+                OR request LIKE ? OR details LIKE ?
+            )
+        """
+        params.extend([pattern, pattern, pattern, pattern])
+
+    if selected_year:
+        sql += " AND school_year = ?"
+        params.append(selected_year)
+
+    sql += """
+        ORDER BY
+            CASE WHEN scheduled_at = '' THEN 1 ELSE 0 END,
+            scheduled_at ASC,
+            id ASC
+    """
+
+    with get_db() as db:
+        records = db.execute(sql, params).fetchall()
+        years = [
+            row["school_year"]
+            for row in db.execute("""
+                SELECT DISTINCT school_year
+                FROM records
+                ORDER BY school_year DESC
+            """).fetchall()
+        ]
+
+    return render_template_string(
+        PAGE,
+        records=records,
+        school_year=current_school_year(),
+        years=years,
+        q=q,
+        selected_year=selected_year
+    )
+
+
+# -------------------------
+# ADD ONE RECORD
+# -------------------------
+
+@app.route("/add", methods=["POST"])
+def add():
+    student = request.form.get("student", "").strip()
+    issue = request.form.get("issue", "").strip()
+    help_request = request.form.get("request", "").strip()
+    details = request.form.get("details", "").strip()
+    scheduled_text = request.form.get("scheduled_at", "").strip()
+
+    if not student or not issue:
+        return "Student and issue are required.", 400
+
+    if len(student) > 150 or len(issue) > 200:
+        return "One of the fields is too long.", 400
+
+    scheduled_at = ""
+
+    if scheduled_text:
+        try:
+            scheduled_at = datetime.strptime(
+                scheduled_text, "%Y-%m-%dT%H:%M"
+            ).strftime("%Y-%m-%d %H:%M")
+        except ValueError:
+            return "Invalid scheduled date and time.", 400
+
+    recorded_at = datetime.now().astimezone().isoformat(
+        sep=" ", timespec="seconds"
+    )
+
+    with get_db() as db:
+        db.execute("""
+            INSERT INTO records
+            (student, issue, details, request, scheduled_at,
+             recorded_at, school_year)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            student, issue, details, help_request,
+            scheduled_at, recorded_at, current_school_year()
+        ))
+
+    return redirect(url_for("home"))
+
+
+# -------------------------
+# IMPORT CSV FILE
+# -------------------------
+
+@app.route("/import-csv", methods=["POST"])
+def import_csv():
+    uploaded = request.files.get("file")
+
+    if not uploaded or not uploaded.filename.lower().endswith(".csv"):
+        return "Please select a CSV file.", 400
+
+    try:
+        content = uploaded.stream.read(5 * 1024 * 1024 + 1)
+
+        if len(content) > 5 * 1024 * 1024:
+            return "CSV is too large. Maximum size is 5 MB.", 400
+
+        content = content.decode("utf-8-sig")
+        reader = csv.DictReader(io.StringIO(content))
+
+        required = {
+            "student_name", "issue", "request", "scheduled_at"
+        }
+
+        if not reader.fieldnames or not required.issubset(
+            set(reader.fieldnames)
+        ):
+            return (
+                "CSV must contain student_name, issue, "
+                "request, scheduled_at.",
+                400
+            )
+
+        rows = []
+
+        for line_number, row in enumerate(reader, start=2):
+            student = (row.get("student_name") or "").strip()
+            issue = (row.get("issue") or "").strip()
+            help_request = (row.get("request") or "").strip()
+            scheduled_text = (row.get("scheduled_at") or "").strip()
+
+            if not student or not issue or not scheduled_text:
+                return (
+                    f"Missing student, issue, or time on row {line_number}.",
+                    400
+                )
+
+            if len(student) > 150 or len(issue) > 200:
+                return f"Text too long on row {line_number}.", 400
+
+            try:
+                scheduled = datetime.strptime(
+                    scheduled_text, "%Y-%m-%d %H:%M"
+                )
+            except ValueError:
+                return (
+                    f"Invalid date/time on row {line_number}. "
+                    "Use YYYY-MM-DD HH:MM.",
+                    400
+                )
+
+            recorded_at = datetime.now().astimezone().isoformat(
+                sep=" ", timespec="seconds"
+            )
+
+            start_year = (
+                scheduled.year if scheduled.month >= 8
+                else scheduled.year - 1
+            )
+            school_year = f"{start_year}-{start_year + 1}"
+
+            rows.append((
+                student, issue, "", help_request,
+                scheduled.strftime("%Y-%m-%d %H:%M"),
+                recorded_at, school_year
+            ))
+
+        if not rows:
+            return "No records found in the CSV.", 400
+
+        # Insert every row in one transaction.
+        with get_db() as db:
+            db.executemany("""
+                INSERT INTO records
+                (student, issue, details, request, scheduled_at,
+                 recorded_at, school_year)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, rows)
+
+        return redirect(url_for("home"))
+
+    except UnicodeDecodeError:
+        return "Please save the CSV as UTF-8.", 400
+    except csv.Error:
+        return "Could not read the CSV file.", 400
+
+
+# -------------------------
+# EXPORT CSV
+# -------------------------
+
+@app.route("/export")
+def export():
+    q = request.args.get("q", "").strip()
+    selected_year = request.args.get("year", "").strip()
+
+    sql = "SELECT * FROM records WHERE 1=1"
+    params = []
+
+    if q:
+        pattern = f"%{q}%"
+        sql += """
+            AND (
+                student LIKE ? OR issue LIKE ?
+                OR request LIKE ? OR details LIKE ?
+            )
+        """
+        params.extend([pattern, pattern, pattern, pattern])
+
+    if selected_year:
+        sql += " AND school_year = ?"
+        params.append(selected_year)
+
+    sql += " ORDER BY scheduled_at, id"
+
+    with get_db() as db:
+        records = db.execute(sql, params).fetchall()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    writer.writerow([
+        "student_name", "issue", "request", "scheduled_at",
+        "school_year", "recorded_at", "details"
+    ])
+
+    for r in records:
+        writer.writerow([
+            r["student"], r["issue"],
+            r["request"] or "", r["scheduled_at"] or "",
+            r["school_year"], r["recorded_at"],
+            r["details"] or ""
+        ])
+
+    return Response(
+        "\ufeff" + output.getvalue(),
+        mimetype="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition":
+                'attachment; filename="student_records.csv"'
+        }
+    )
+
+
+if __name__ == "__main__":
+    initialize_db()
+    app.run(host="0.0.0.0", port=5000, debug=False)
