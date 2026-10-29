@@ -55,13 +55,13 @@ The devices use Bluetooth. They do not join the school Wi-Fi, and they do not us
 
 ### Time
 
-Neither ESP32 has a battery-backed clock. The student panel sets its clock from the time the sketch was uploaded, saves that clock every minute, and sends it with each selection. After a reboot it continues from the last save. Time while a panel is unplugged is skipped. The teacher screen shows that time in US Mountain time. The CSV stores the same moment as a UTC number, and the website shows it in the computer's local time.
+Neither ESP32 has a battery-backed clock. The student panel sets its clock from the time the sketch was uploaded, saves that clock every minute, and sends it with each selection. After a reboot it continues from the last save. Time while a panel is unplugged is skipped. The teacher screen shows that time in US Mountain time, and it uses the same clock while it stays powered so a Yes or No can store when the reply happened. The CSV stores both moments as UTC numbers. The website shows the selection time in the computer's local time and the typical time from the request to the reply.
 
 ### Getting the week onto a computer
 
 Plug the teacher device's USB-C port into the computer. A drive appears with `CLEAR.CSV`. Copy that file. Copying does not erase the week. Unplug the device when you are done.
 
-Columns: `id`, `time_sent`, `student`, `feeling`, `choice`, `kind`, `teacher_response`. `time_sent` is seconds since 1970 UTC. `kind` is `ask` or `try`. `teacher_response` is empty until the teacher presses Yes or No, and then a later line for the same `id` says `yes` or `no`.
+Columns: `id`, `time_sent`, `student`, `feeling`, `choice`, `kind`, `teacher_response`, `time_answered`. `time_sent` is seconds since 1970 UTC. `kind` is `ask` or `try`. `teacher_response` is empty until the teacher presses Yes or No, and then a later line for the same `id` says `yes` or `no`. `time_answered` on that later line is when the button was pressed. The website uses it for the typical reply time.
 
 ### Erasing the week
 
@@ -69,9 +69,9 @@ Delete `CLEAR.CSV` on the computer, then unplug the teacher device. It starts a 
 
 ## Website
 
-Open `website/index.html` in a browser. Choose the CSV, name the week, and save it. Each week stays in that browser. Saving another week does not replace the earlier ones unless it is given the same name. Trends cover feelings, students, try versus ask, teacher answers, selections by day, and time of day.
+Open `website/index.html` in a browser. Sample classroom weeks are already on the page, so the graphs and the trend note can be shown before a device is plugged in. Choose `CLEAR.CSV` to add a real week beside those samples. The page names that week from the times in the file and keeps earlier imported weeks in that browser. A short note at the top says what stands out, including how the newest week compares with the one before it and how long a typical reply took. An after-class paragraph describes the class pattern from those totals. It stays on this computer and does not name a student. The teacher does not type the rows or name the week.
 
-The saved weeks live in that browser on that computer. Another computer does not have them until the same CSV files are imported there. Removing a week on the site only removes it from the browser. A shared server can come later.
+The saved weeks live in that browser on that computer. Another computer does not have them until the same files are opened there. Removing a week on the site only removes it from the browser.
 
 ## CrowPanel sketch
 

@@ -38,8 +38,10 @@
 
   Neither ESP32 has a battery clock. The student panel keeps the time,
   starting from the moment its sketch was uploaded, and sends that time
-  with every selection. The website turns it into the computer's local
-  time. Time spent while a panel is unplugged is not counted.
+  with every selection. This board adopts that time while it stays on,
+  and a Yes or No stores when the reply happened. The website turns
+  those times into the computer's local time and into how long the
+  reply took. Time spent while a board is unplugged is not counted.
 */
 
 #include <SPIFFS.h>
@@ -50,6 +52,7 @@
 #include <LovyanGFX.hpp>
 #include <string.h>
 #include <time.h>
+#include <sys/time.h>
 #include <esp_heap_caps.h>
 #include "CLEAR_Link.h"
 
@@ -79,7 +82,7 @@ static const uint16_t COL_FOOT = 0xE73C;
 
 static const char *LOG_PATH = "/clear.csv";
 static const char *LOG_HEADER =
-  "id,time_sent,student,feeling,choice,kind,teacher_response\n";
+  "id,time_sent,student,feeling,choice,kind,teacher_response,time_answered\n";
 
 static const int LIST_MAX = 12;
 static const int RING_MAX = 8;
@@ -268,7 +271,35 @@ static bool writeFreshLog() {
   return true;
 }
 
-static void appendRow(const ClearNote *note) {
+// A student message carries the time of the tap. This board has no
+// battery clock of its own, so it catches up to that time and then
+// keeps counting until power is lost.
+static void adoptStudentClock(uint32_t timeSent) {
+  if (timeSent < 1700000000UL) {
+    return;
+  }
+  time_t now = time(nullptr);
+  if ((uint32_t)now >= timeSent) {
+    return;
+  }
+  struct timeval tv;
+  tv.tv_sec = timeSent;
+  tv.tv_usec = 0;
+  settimeofday(&tv, nullptr);
+}
+
+// Zero means the board does not know the time yet.
+static uint32_t clockNow() {
+  time_t now = time(nullptr);
+  if (now < 1700000000) {
+    return 0;
+  }
+  return (uint32_t)now;
+}
+
+// timeAnswered is 0 for the first line of a selection. A Yes or No
+// writes a second line with the same id and the time of the button.
+static void appendRow(const ClearNote *note, uint32_t timeAnswered) {
   if (!storageOk) {
     return;
   }
@@ -297,8 +328,53 @@ static void appendRow(const ClearNote *note) {
   file.print("\",");
   file.print(note->asksTeacher ? "ask" : "try");
   file.print(',');
-  file.println(answer);
+  file.print(answer);
+  file.print(',');
+  if (timeAnswered > 0) {
+    file.print(timeAnswered);
+  }
+  file.println();
   file.close();
+}
+
+// Older week files have no time_answered column. Add an empty one so
+// later Yes and No lines can store a time without a mismatched header.
+static void ensureLogHeader() {
+  File file = SPIFFS.open(LOG_PATH, FILE_READ);
+  if (!file) {
+    return;
+  }
+  String header = file.readStringUntil('\n');
+  header.trim();
+  if (header.indexOf("time_answered") >= 0) {
+    file.close();
+    return;
+  }
+  String rest = file.readString();
+  file.close();
+  File out = SPIFFS.open(LOG_PATH, FILE_WRITE);
+  if (!out) {
+    return;
+  }
+  out.print(LOG_HEADER);
+  int start = 0;
+  while (start < rest.length()) {
+    int end = rest.indexOf('\n', start);
+    if (end < 0) {
+      end = rest.length();
+    }
+    String line = rest.substring(start, end);
+    line.trim();
+    if (line.length() > 0) {
+      out.print(line);
+      out.println(",");
+    }
+    if (end >= rest.length()) {
+      break;
+    }
+    start = end + 1;
+  }
+  out.close();
 }
 
 static void startStorage() {
@@ -308,6 +384,9 @@ static void startStorage() {
   }
   if (!SPIFFS.exists(LOG_PATH)) {
     storageOk = writeFreshLog();
+  }
+  if (storageOk) {
+    ensureLogHeader();
   }
 }
 
@@ -556,7 +635,7 @@ static void sendReply(ClearNote note, uint8_t answer) {
     replyChar->setValue((uint8_t *)&note, sizeof(note));
     replyChar->notify();
   }
-  appendRow(&note);
+  appendRow(&note, clockNow());
 }
 
 static void answerCurrent(uint8_t answer) {
@@ -596,7 +675,8 @@ static void drainNotices() {
     ClearNote note = noticeRing[ringRead];
     ringRead = (ringRead + 1) % RING_MAX;
     note.answer = CLEAR_ANSWER_NONE;
-    appendRow(&note);
+    adoptStudentClock(note.timeSent);
+    appendRow(&note, 0);
     remember(&note);
     paintScreen();
   }
