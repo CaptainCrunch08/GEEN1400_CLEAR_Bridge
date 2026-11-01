@@ -31,6 +31,9 @@
   following student. Yes and No answer the student on screen and send
   that answer back.
 
+  When CLEAR_Teacher_Config.h is filled in, completed drawings are sent
+  over Wi-Fi to the local OCR computer and recognized text returns over BLE.
+
   The week is kept in the chip's flash. Plugging the USB-C port into a
   computer shows a drive with CLEAR.CSV. Copying the file leaves the
   week on the device. Deleting CLEAR.CSV and unplugging starts a new
@@ -45,6 +48,8 @@
 */
 
 #include <SPIFFS.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
@@ -55,6 +60,22 @@
 #include <sys/time.h>
 #include <esp_heap_caps.h>
 #include "CLEAR_Link.h"
+#if __has_include("CLEAR_Teacher_Config.h")
+#include "CLEAR_Teacher_Config.h"
+#endif
+
+#ifndef CLEAR_WIFI_SSID
+#define CLEAR_WIFI_SSID ""
+#endif
+#ifndef CLEAR_WIFI_PASSWORD
+#define CLEAR_WIFI_PASSWORD ""
+#endif
+#ifndef CLEAR_OCR_SERVER_URL
+#define CLEAR_OCR_SERVER_URL ""
+#endif
+#ifndef CLEAR_OCR_TOKEN
+#define CLEAR_OCR_TOKEN ""
+#endif
 
 #if !defined(ARDUINO_USB_MODE) || ARDUINO_USB_MODE != 1
 #include "USB.h"
@@ -99,6 +120,7 @@ static const uint16_t DISK_DATA_START_SECTOR =
 static const uint16_t DISK_CLUSTER_BYTES = DISK_SECTORS_PER_CLUSTER * 512;
 static const uint16_t DISK_MAX_FILES = DISK_ROOT_ENTRIES;
 static const size_t DRAWING_MAX_BYTES = 300000;
+static const uint8_t OCR_QUEUE_MAX = 4;
 
 struct DrawingPacketEntry {
   uint8_t bytes[sizeof(ClearDrawingChunk)];
@@ -174,9 +196,41 @@ static uint32_t activeDrawingId = 0;
 static uint32_t activeDrawingBytes = 0;
 static uint32_t activeDrawingReceived = 0;
 static uint16_t activeDrawingChunkIndex = 0;
+static uint8_t activeDrawingBoard = 0;
 static File activeDrawingFile;
 static char activeDrawingTempPath[40] = "";
 static char activeDrawingPath[40] = "";
+struct OcrJob {
+  char path[40];
+  char remoteJobId[40];
+  uint32_t drawingId;
+  uint8_t board;
+  bool serverJobStarted;
+  bool textReady;
+  uint16_t textSize;
+  unsigned long remoteJobStartedMs;
+  unsigned long nextRemotePollMs;
+  char text[601];
+};
+enum OcrProcessResult {
+  OCR_PROCESS_READY,
+  OCR_PROCESS_WAITING,
+  OCR_PROCESS_RETRY,
+  OCR_PROCESS_FAILED
+};
+
+static OcrJob ocrJobs[OCR_QUEUE_MAX] = {};
+static uint8_t ocrJobWrite = 0;
+static uint8_t ocrJobRead = 0;
+static bool ocrJobOverflow = false;
+static portMUX_TYPE ocrAckMux = portMUX_INITIALIZER_UNLOCKED;
+static volatile bool ocrAckReady = false;
+static volatile uint32_t ocrAckDrawingId = 0;
+static volatile uint16_t ocrAckChunkIndex = 0;
+static volatile bool ocrAckAccepted = false;
+static unsigned long nextOcrWifiRetryMs = 0;
+static unsigned long nextOcrAttemptMs = 0;
+static bool ocrConfigWarningShown = false;
 static DiskFileEntry diskFiles[DISK_MAX_FILES];
 static uint16_t diskFileCount = 0;
 static unsigned long buttonMs = 0;
@@ -694,6 +748,21 @@ static void remember(const ClearNote *note) {
 }
 
 static void takeNotice(const uint8_t *data, int len) {
+  if (len == (int)sizeof(ClearOcrTextAck)) {
+    ClearOcrTextAck ack;
+    memcpy(&ack, data, sizeof(ack));
+    if (ack.version != CLEAR_LINK_VERSION ||
+        ack.kind != CLEAR_KIND_OCR_TEXT_ACK || ack.accepted > 1) {
+      return;
+    }
+    portENTER_CRITICAL(&ocrAckMux);
+    ocrAckDrawingId = ack.drawingId;
+    ocrAckChunkIndex = ack.chunkIndex;
+    ocrAckAccepted = ack.accepted != 0;
+    ocrAckReady = true;
+    portEXIT_CRITICAL(&ocrAckMux);
+    return;
+  }
   if (len >= 2 && data[0] == CLEAR_LINK_VERSION &&
       data[1] >= CLEAR_KIND_DRAWING_START &&
       data[1] <= CLEAR_KIND_DRAWING_END &&
@@ -810,6 +879,7 @@ static void beginDrawingTransfer(const ClearDrawingStart *packet) {
     return;
   }
   activeDrawingId = packet->drawingId;
+  activeDrawingBoard = packet->board;
   activeDrawingBytes = packet->totalBytes;
   activeDrawingReceived = 0;
   activeDrawingChunkIndex = 0;
@@ -857,6 +927,9 @@ static void handleDrawingPacket(const uint8_t *data, uint8_t length) {
     bool complete = activeDrawingId == packet.drawingId &&
                     activeDrawingReceived == activeDrawingBytes;
     uint32_t finishedId = packet.drawingId;
+    uint8_t finishedBoard = activeDrawingBoard;
+    char finishedPath[sizeof(activeDrawingPath)];
+    copyField(finishedPath, sizeof(finishedPath), activeDrawingPath);
     if (activeDrawingFile) {
       activeDrawingFile.flush();
       activeDrawingFile.close();
@@ -882,7 +955,274 @@ static void handleDrawingPacket(const uint8_t *data, uint8_t length) {
     }
     closeActiveDrawing(false);
     sendDrawingResult(finishedId, complete);
+    if (complete) {
+      uint8_t next = (ocrJobWrite + 1) % OCR_QUEUE_MAX;
+      if (next == ocrJobRead) {
+        ocrJobOverflow = true;
+      } else {
+        OcrJob &job = ocrJobs[ocrJobWrite];
+        memset(&job, 0, sizeof(job));
+        copyField(job.path, sizeof(job.path), finishedPath);
+        job.drawingId = finishedId;
+        job.board = finishedBoard;
+        ocrJobWrite = next;
+      }
+    }
   }
+}
+
+static bool clearOcrConfigured() {
+  return CLEAR_WIFI_SSID[0] != 0 && CLEAR_OCR_SERVER_URL[0] != 0 &&
+         CLEAR_OCR_TOKEN[0] != 0;
+}
+
+static void startOcrWifi() {
+  if (!clearOcrConfigured()) {
+    Serial.println("Local OCR is disabled. Configure CLEAR_Teacher_Config.h.");
+    return;
+  }
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  WiFi.setAutoReconnect(true);
+  WiFi.begin(CLEAR_WIFI_SSID, CLEAR_WIFI_PASSWORD);
+  nextOcrWifiRetryMs = millis() + 30000;
+  Serial.println("Connecting teacher to the local OCR Wi-Fi network.");
+}
+
+static bool sendOcrPacketAndWait(const uint8_t *data, size_t length,
+                                 uint32_t drawingId, uint16_t chunkIndex) {
+  if (replyChar == nullptr) return false;
+  for (int attempt = 0; attempt < 3; attempt++) {
+    portENTER_CRITICAL(&ocrAckMux);
+    ocrAckReady = false;
+    portEXIT_CRITICAL(&ocrAckMux);
+    replyChar->setValue((uint8_t *)data, length);
+    replyChar->notify();
+    unsigned long started = millis();
+    while ((unsigned long)(millis() - started) < 1800) {
+      bool ready;
+      uint32_t ackId;
+      uint16_t ackIndex;
+      bool accepted;
+      portENTER_CRITICAL(&ocrAckMux);
+      ready = ocrAckReady;
+      ackId = ocrAckDrawingId;
+      ackIndex = ocrAckChunkIndex;
+      accepted = ocrAckAccepted;
+      if (ready) ocrAckReady = false;
+      portEXIT_CRITICAL(&ocrAckMux);
+      if (ready && ackId == drawingId && ackIndex == chunkIndex) {
+        return accepted;
+      }
+      delay(2);
+    }
+  }
+  return false;
+}
+
+static bool sendOcrResultToPanel(OcrJob &job) {
+  if (job.textSize == 0 || job.textSize > 600) return false;
+  ClearOcrTextStart start = {};
+  start.version = CLEAR_LINK_VERSION;
+  start.kind = CLEAR_KIND_OCR_TEXT_START;
+  start.drawingId = job.drawingId;
+  start.board = job.board;
+  start.totalBytes = job.textSize;
+  if (!sendOcrPacketAndWait((const uint8_t *)&start, sizeof(start),
+                            job.drawingId, 0xFFFF)) return false;
+
+  uint16_t chunkCount = 0;
+  size_t offset = 0;
+  while (offset < job.textSize) {
+    ClearOcrTextChunk chunk = {};
+    chunk.version = CLEAR_LINK_VERSION;
+    chunk.kind = CLEAR_KIND_OCR_TEXT_CHUNK;
+    chunk.drawingId = job.drawingId;
+    chunk.chunkIndex = chunkCount;
+    size_t count = job.textSize - offset;
+    if (count > CLEAR_DRAWING_CHUNK_SIZE) count = CLEAR_DRAWING_CHUNK_SIZE;
+    chunk.payloadSize = count;
+    memcpy(chunk.payload, job.text + offset, count);
+    size_t packetSize = offsetof(ClearOcrTextChunk, payload) + count;
+    if (!sendOcrPacketAndWait((const uint8_t *)&chunk, packetSize,
+                              job.drawingId, chunkCount)) return false;
+    offset += count;
+    chunkCount++;
+  }
+
+  ClearOcrTextEnd end = {};
+  end.version = CLEAR_LINK_VERSION;
+  end.kind = CLEAR_KIND_OCR_TEXT_END;
+  end.drawingId = job.drawingId;
+  end.chunkCount = chunkCount;
+  return sendOcrPacketAndWait((const uint8_t *)&end, sizeof(end),
+                              job.drawingId, 0xFFFE);
+}
+
+static OcrProcessResult recognizeDrawingLocally(OcrJob &job) {
+  if (!job.serverJobStarted) {
+    File svg = SPIFFS.open(job.path, FILE_READ);
+    if (!svg || svg.size() == 0 || svg.size() > DRAWING_MAX_BYTES) {
+      if (svg) svg.close();
+      Serial.printf("Local OCR: drawing %08lX is missing or too large.\n",
+                    (unsigned long)job.drawingId);
+      return OCR_PROCESS_FAILED;
+    }
+
+    WiFiClient client;
+    HTTPClient http;
+    http.setTimeout(8000);
+    if (!http.begin(client, CLEAR_OCR_SERVER_URL "/recognize")) {
+      svg.close();
+      Serial.println("Local OCR server URL is invalid.");
+      return OCR_PROCESS_RETRY;
+    }
+    http.addHeader("Content-Type", "image/svg+xml");
+    http.addHeader("X-CLEAR-Token", CLEAR_OCR_TOKEN);
+    Serial.printf("Submitting drawing %08lX to local OCR.\n",
+                  (unsigned long)job.drawingId);
+    int responseCode = http.sendRequest("POST", &svg, svg.size());
+    svg.close();
+    if (responseCode != HTTP_CODE_ACCEPTED) {
+      http.end();
+      Serial.printf("Local OCR submission failed (HTTP %d).\n", responseCode);
+      return OCR_PROCESS_RETRY;
+    }
+
+    String jobId = http.getString();
+    http.end();
+    jobId.trim();
+    if (jobId.length() == 0 || jobId.length() >= sizeof(job.remoteJobId)) {
+      Serial.println("Local OCR server returned an invalid job ID.");
+      return OCR_PROCESS_RETRY;
+    }
+    copyField(job.remoteJobId, sizeof(job.remoteJobId), jobId.c_str());
+    job.serverJobStarted = true;
+    job.remoteJobStartedMs = millis();
+    job.nextRemotePollMs = millis() + 1000;
+    return OCR_PROCESS_WAITING;
+  }
+
+  if ((long)(millis() - job.nextRemotePollMs) < 0) {
+    return OCR_PROCESS_WAITING;
+  }
+  if ((unsigned long)(millis() - job.remoteJobStartedMs) >= 300000) {
+    job.serverJobStarted = false;
+    job.remoteJobId[0] = 0;
+    Serial.printf("Local OCR timed out for drawing %08lX.\n",
+                  (unsigned long)job.drawingId);
+    return OCR_PROCESS_RETRY;
+  }
+
+  WiFiClient client;
+  HTTPClient http;
+  http.setTimeout(8000);
+  String resultUrl = String(CLEAR_OCR_SERVER_URL) + "/result/" +
+                     job.remoteJobId;
+  if (!http.begin(client, resultUrl)) {
+    Serial.println("Local OCR result URL is invalid.");
+    job.nextRemotePollMs = millis() + 5000;
+    return OCR_PROCESS_WAITING;
+  }
+  http.addHeader("X-CLEAR-Token", CLEAR_OCR_TOKEN);
+  int responseCode = http.GET();
+  if (responseCode == 202) {
+    http.end();
+    job.nextRemotePollMs = millis() + 1000;
+    return OCR_PROCESS_WAITING;
+  }
+  if (responseCode == HTTP_CODE_OK) {
+    String text = http.getString();
+    http.end();
+    WiFiClient cleanupClient;
+    HTTPClient cleanup;
+    if (cleanup.begin(cleanupClient, resultUrl)) {
+      cleanup.addHeader("X-CLEAR-Token", CLEAR_OCR_TOKEN);
+      cleanup.sendRequest("DELETE");
+      cleanup.end();
+    }
+    if (text.length() == 0 || text.length() > 600) {
+      Serial.println("Local OCR returned no text or text exceeded 600 bytes.");
+      return OCR_PROCESS_FAILED;
+    }
+    for (size_t i = 0; i < text.length(); i++) {
+      if (text[i] == 0 || (uint8_t)text[i] < 0x09 ||
+          ((uint8_t)text[i] > 0x0D && (uint8_t)text[i] < 0x20)) {
+        Serial.println("Local OCR returned unsupported control characters.");
+        return OCR_PROCESS_FAILED;
+      }
+    }
+    memcpy(job.text, text.c_str(), text.length());
+    job.text[text.length()] = 0;
+    job.textSize = text.length();
+    job.textReady = true;
+    job.serverJobStarted = false;
+    job.remoteJobId[0] = 0;
+    return OCR_PROCESS_READY;
+  }
+  http.end();
+  if (responseCode == 404 || responseCode == 422) {
+    Serial.printf("Local OCR could not recognize drawing %08lX (HTTP %d).\n",
+                  (unsigned long)job.drawingId, responseCode);
+    job.serverJobStarted = false;
+    job.remoteJobId[0] = 0;
+    return OCR_PROCESS_FAILED;
+  }
+  Serial.printf("Could not check local OCR job (HTTP %d).\n", responseCode);
+  job.nextRemotePollMs = millis() + 5000;
+  return OCR_PROCESS_WAITING;
+}
+
+static void serviceOcrJobs() {
+  if (ocrJobOverflow) {
+    ocrJobOverflow = false;
+    Serial.println("Local OCR queue is full; a saved drawing was not queued.");
+  }
+  if (ocrJobRead == ocrJobWrite) return;
+  if (!clearOcrConfigured()) {
+    if (!ocrConfigWarningShown) {
+      Serial.println("Drawings are saved, but local OCR is not configured.");
+      ocrConfigWarningShown = true;
+    }
+    return;
+  }
+  ocrConfigWarningShown = false;
+  if (WiFi.status() != WL_CONNECTED) {
+    if ((long)(millis() - nextOcrWifiRetryMs) >= 0) {
+      WiFi.disconnect(false, false);
+      WiFi.begin(CLEAR_WIFI_SSID, CLEAR_WIFI_PASSWORD);
+      nextOcrWifiRetryMs = millis() + 30000;
+      Serial.println("Waiting for the local OCR Wi-Fi connection.");
+    }
+    return;
+  }
+  if ((long)(millis() - nextOcrAttemptMs) < 0) return;
+
+  OcrJob &job = ocrJobs[ocrJobRead];
+  if (!job.textReady) {
+    OcrProcessResult result = recognizeDrawingLocally(job);
+    if (result == OCR_PROCESS_WAITING) return;
+    if (result == OCR_PROCESS_RETRY) {
+      nextOcrAttemptMs = millis() + 15000;
+      return;
+    }
+    if (result == OCR_PROCESS_FAILED) {
+      ocrJobRead = (ocrJobRead + 1) % OCR_QUEUE_MAX;
+      nextOcrAttemptMs = 0;
+      return;
+    }
+  }
+
+  if (!sendOcrResultToPanel(job)) {
+    Serial.printf("OCR text for drawing %08lX is waiting for BLE return.\n",
+                  (unsigned long)job.drawingId);
+    nextOcrAttemptMs = millis() + 5000;
+    return;
+  }
+  Serial.printf("OCR text for drawing %08lX was saved on the student panel.\n",
+                (unsigned long)job.drawingId);
+  ocrJobRead = (ocrJobRead + 1) % OCR_QUEUE_MAX;
+  nextOcrAttemptMs = 0;
 }
 
 static void drainDrawingPackets() {
@@ -959,6 +1299,7 @@ static void drainNotices() {
 }
 
 void setup() {
+  Serial.begin(115200);
   setenv("TZ", CLOCK_TZ, 1);
   tzset();
   pinMode(PIN_LCD_BL, OUTPUT);
@@ -974,10 +1315,12 @@ void setup() {
   startStorage();
   startRadio();
   startUsbDrive();
+  startOcrWifi();
 }
 
 void loop() {
   drainNotices();
+  serviceOcrJobs();
   if (pressed(PIN_NEXT, &nextWasDown)) {
     cycleStudent();
   } else if (pressed(PIN_YES, &yesWasDown)) {

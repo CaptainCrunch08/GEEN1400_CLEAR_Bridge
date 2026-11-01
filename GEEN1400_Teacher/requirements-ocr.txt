@@ -1,0 +1,5 @@
+torch>=2.2
+transformers>=4.40,<5
+pillow>=10
+cairosvg>=2.7
+numpy>=1.26

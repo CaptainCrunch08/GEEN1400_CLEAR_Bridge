@@ -190,6 +190,7 @@ static const int DRAW_BACK_H = 44;
 static const int DRAW_SAVE_X = 98;
 static const int DRAW_RESET_X = 192;
 static const int DRAW_NEW_X = 310;
+static const int DRAW_READ_X = 410;
 static const int DRAW_BUTTON_Y = 8;
 static const int DRAW_BUTTON_H = 44;
 static const int DRAW_COLOR_Y = 58;
@@ -204,8 +205,10 @@ static const char *DRAW_CHALK_NAMES[DRAW_COLOR_COUNT] = {
   "Orange", "White", "Blue", "Green"
 };
 static const uint32_t DRAW_FILE_MAGIC = 0x434C4452;
+static const uint32_t DRAW_OCR_FILE_MAGIC = 0x434C4F43;
 static const uint8_t DRAW_FILE_VERSION = 1;
 static const int DRAW_SEGMENT_MAX = 2400;
+static const size_t DRAW_OCR_MAX_BYTES = 600;
 static const unsigned long DRAW_WARNING_MS = 120000;
 
 static const int BOARD_GRAPH = 0;
@@ -221,6 +224,12 @@ struct DrawingFileHeader {
   uint8_t version;
   uint8_t board;
   uint8_t chalkColor;
+};
+
+struct DrawingOcrFileHeader {
+  uint32_t magic;
+  uint32_t drawingId;
+  uint16_t textBytes;
 };
 
 struct DrawingSegment {
@@ -549,6 +558,7 @@ static bool storageSavePending = false;
 static bool storageCleanupRunning = false;
 static bool drawingSyncPending = false;
 static bool drawingSyncWaitingForAck = false;
+static bool exitAfterDrawingSync = false;
 static bool newBoardAfterSync = false;
 static uint8_t drawingSyncState = 0;
 static uint16_t drawingSyncChunkIndex = 0;
@@ -559,6 +569,23 @@ static File drawingSyncFile;
 static char drawingSyncPath[40] = "";
 static volatile bool drawingResultReady = false;
 static ClearDrawingResult pendingDrawingResult = {};
+static char drawingOcrText[DRAW_OCR_MAX_BYTES + 1] = "";
+static bool drawingOcrVisible = false;
+static uint16_t drawingOcrPage = 0;
+static uint16_t drawingOcrPageCount = 1;
+static uint8_t ocrReceiveBoard = 0;
+static uint32_t ocrReceiveDrawingId = 0;
+static uint16_t ocrReceiveExpectedBytes = 0;
+static uint16_t ocrReceiveBytes = 0;
+static uint16_t ocrReceiveNextChunk = 0;
+static char ocrReceiveText[DRAW_OCR_MAX_BYTES + 1] = "";
+static bool ocrReceiveActive = false;
+static uint32_t ocrReceiveCompletedId = 0;
+static bool ocrReceiveCompletedOk = false;
+static portMUX_TYPE ocrBleMux = portMUX_INITIALIZER_UNLOCKED;
+static volatile bool ocrBlePacketReady = false;
+static uint8_t pendingOcrBleBytes[sizeof(ClearOcrTextChunk)] = {};
+static uint8_t pendingOcrBleLength = 0;
 static char drawStatus[64] = "Draw on the board";
 static unsigned long drawStatusUntilMs = 0;
 
@@ -712,6 +739,20 @@ static void copyField(char *dest, int size, const char *src) {
 // The radio task calls this when a packet arrives. It only stores the
 // packet. Drawing and the screen stay in loop(), where they are safe.
 static void takeLinkPacket(const uint8_t *data, int len) {
+  if (len >= 2 && data[0] == CLEAR_LINK_VERSION &&
+      (data[1] == CLEAR_KIND_OCR_TEXT_START ||
+       data[1] == CLEAR_KIND_OCR_TEXT_CHUNK ||
+       data[1] == CLEAR_KIND_OCR_TEXT_END) &&
+      len <= (int)sizeof(pendingOcrBleBytes)) {
+    portENTER_CRITICAL(&ocrBleMux);
+    if (!ocrBlePacketReady) {
+      memcpy(pendingOcrBleBytes, data, len);
+      pendingOcrBleLength = len;
+      ocrBlePacketReady = true;
+    }
+    portEXIT_CRITICAL(&ocrBleMux);
+    return;
+  }
   if (len == (int)sizeof(ClearDrawingResult)) {
     ClearDrawingResult result;
     memcpy(&result, data, sizeof(result));
@@ -1763,13 +1804,64 @@ static uint16_t drawingSurfaceColor() {
   return selectedBoard == BOARD_CHALK ? 0x13A4 : 0xFFFF;
 }
 
+static int paintDrawingOcrTextPage() {
+  const int left = 18;
+  const int right = 782;
+  const int firstY = DRAW_HEADER_H + 12;
+  lcd.setTextDatum(textdatum_t::top_left);
+  lcd.setFont(&fonts::Font2);
+  lcd.setTextColor(COL_FG, COL_BG);
+  int lineHeight = lcd.fontHeight() + 8;
+  int linesPerPage = (DRAW_CANVAS_BOTTOM - firstY - 8) / lineHeight;
+  int line = 0;
+  int cursorX = left;
+  int spaceWidth = lcd.textWidth(" ");
+  const char *word = drawingOcrText;
+  while (*word) {
+    if (*word == '\n') {
+      line++;
+      cursorX = left;
+      word++;
+      continue;
+    }
+    while (*word == ' ') word++;
+    if (!*word) break;
+    const char *end = word;
+    while (*end && *end != ' ' && *end != '\n') end++;
+    char buffer[80];
+    int length = end - word;
+    if (length > (int)sizeof(buffer) - 1) length = sizeof(buffer) - 1;
+    memcpy(buffer, word, length);
+    buffer[length] = 0;
+    int width = lcd.textWidth(buffer);
+    if (cursorX > left && cursorX + width > right) {
+      line++;
+      cursorX = left;
+    }
+    if (line >= (int)drawingOcrPage * linesPerPage &&
+        line < ((int)drawingOcrPage + 1) * linesPerPage) {
+      lcd.drawString(buffer, cursorX,
+                     firstY + (line - drawingOcrPage * linesPerPage) * lineHeight);
+    }
+    cursorX += width + spaceWidth;
+    word = end;
+  }
+  int pageCount = line / linesPerPage + 1;
+  drawingOcrPageCount = pageCount;
+  if (drawingOcrPage >= drawingOcrPageCount) {
+    drawingOcrPage = drawingOcrPageCount - 1;
+    return paintDrawingOcrTextPage();
+  }
+  return pageCount;
+}
+
 static void paintDrawingCanvas() {
   uint16_t surface = drawingSurfaceColor();
   uint16_t header = selectedBoard == BOARD_CHALK ? 0x13A4 : COL_BG;
   lcd.fillScreen(surface);
   lcd.fillRect(0, 0, 800, DRAW_HEADER_H, header);
 
-  if (selectedBoard == BOARD_GRAPH) {
+  if (!drawingOcrVisible && selectedBoard == BOARD_GRAPH) {
     const uint16_t gridColor = 0xCE79;
     for (int x = 0; x < 800; x += 20) {
       lcd.drawLine(x, DRAW_HEADER_H, x, DRAW_CANVAS_BOTTOM - 1, gridColor);
@@ -1787,7 +1879,7 @@ static void paintDrawingCanvas() {
   } else if (selectedBoard == BOARD_WHITE) {
     lcd.drawString("White Board - Marker", 555, 30);
   } else {
-    lcd.drawString("Choose chalk", 430, 30);
+    lcd.drawString("Choose chalk", 555, 30);
   }
 
   uint16_t buttonFill = selectedBoard == BOARD_CHALK ? 0xFFFF : COL_ROW;
@@ -1795,6 +1887,8 @@ static void paintDrawingCanvas() {
   paintTopButton(DRAW_SAVE_X, DRAW_BUTTON_Y, 80, DRAW_BUTTON_H, "Save", buttonFill);
   paintTopButton(DRAW_RESET_X, DRAW_BUTTON_Y, 104, DRAW_BUTTON_H, "Reset", buttonFill);
   paintTopButton(DRAW_NEW_X, DRAW_BUTTON_Y, 96, DRAW_BUTTON_H, "New", buttonFill);
+  paintTopButton(DRAW_READ_X, DRAW_BUTTON_Y, 88, DRAW_BUTTON_H,
+                 drawingOcrVisible ? "Draw" : "Read");
   if (selectedBoard == BOARD_CHALK) {
     for (int i = 0; i < DRAW_COLOR_COUNT; i++) {
       lcd.fillRoundRect(DRAW_COLOR_X[i], DRAW_COLOR_Y, DRAW_COLOR_W, DRAW_COLOR_H,
@@ -1812,6 +1906,24 @@ static void paintDrawingCanvas() {
       lcd.drawString(DRAW_CHALK_NAMES[i], DRAW_COLOR_X[i] + DRAW_COLOR_W / 2,
                      DRAW_COLOR_Y + DRAW_COLOR_H / 2);
     }
+  }
+
+  if (drawingOcrVisible) {
+    lcd.fillRect(0, DRAW_HEADER_H, 800,
+                 DRAW_CANVAS_BOTTOM - DRAW_HEADER_H, COL_BG);
+    int pageCount = paintDrawingOcrTextPage();
+    lcd.fillRect(0, DRAW_CANVAS_BOTTOM, 800, 480 - DRAW_CANVAS_BOTTOM, COL_FOOT);
+    lcd.setTextDatum(textdatum_t::middle_left);
+    lcd.setFont(&fonts::Font2);
+    lcd.setTextColor(COL_FG, COL_FOOT);
+    char pageStatus[64];
+    snprintf(pageStatus, sizeof(pageStatus),
+             "Readable text - page %u/%d. Tap below to continue",
+             (unsigned)(drawingOcrPage + 1), pageCount);
+    lcd.drawString(pageStatus, 18, DRAW_CANVAS_BOTTOM + 30);
+    lcd.setTextDatum(textdatum_t::top_left);
+    cursorVisible = false;
+    return;
   }
 
   for (int i = 0; i < drawingSegmentCount; i++) {
@@ -1990,13 +2102,118 @@ static const char *drawingFilePath(int board) {
   return "/chalk.bin";
 }
 
+static const char *drawingOcrPath(int board) {
+  if (board == BOARD_GRAPH) return "/graph.ocr";
+  if (board == BOARD_WHITE) return "/white.ocr";
+  return "/chalk.ocr";
+}
+
+static void setDrawStatus(const char *text, unsigned long durationMs = 0);
+
+static void clearDrawingOcr(int board) {
+  if (drawStorageReady && SPIFFS.exists(drawingOcrPath(board)) &&
+      !SPIFFS.remove(drawingOcrPath(board))) {
+    setDrawStatus("Could not remove outdated readable text");
+  }
+  if (selectedBoard == board) {
+    drawingOcrText[0] = 0;
+    drawingOcrVisible = false;
+    drawingOcrPage = 0;
+    drawingOcrPageCount = 1;
+  }
+}
+
+static bool loadDrawingOcr(int board) {
+  drawingOcrText[0] = 0;
+  drawingOcrVisible = false;
+  drawingOcrPage = 0;
+  drawingOcrPageCount = 1;
+  if (!drawStorageReady) return false;
+  File file = SPIFFS.open(drawingOcrPath(board), FILE_READ);
+  if (!file) return false;
+  DrawingOcrFileHeader header = {};
+  bool valid = file.read((uint8_t *)&header, sizeof(header)) == sizeof(header) &&
+               header.magic == DRAW_OCR_FILE_MAGIC &&
+               header.drawingId == currentDrawingId &&
+               header.textBytes > 0 &&
+               header.textBytes <= DRAW_OCR_MAX_BYTES &&
+               file.size() == sizeof(header) + header.textBytes &&
+               file.read((uint8_t *)drawingOcrText, header.textBytes) ==
+                 header.textBytes;
+  file.close();
+  if (!valid) {
+    SPIFFS.remove(drawingOcrPath(board));
+    drawingOcrText[0] = 0;
+    return false;
+  }
+  drawingOcrText[header.textBytes] = 0;
+  for (size_t i = 0; i < header.textBytes; i++) {
+    if (drawingOcrText[i] == 0) {
+      SPIFFS.remove(drawingOcrPath(board));
+      drawingOcrText[0] = 0;
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool saveDrawingOcr(uint8_t board, uint32_t drawingId,
+                           const char *text, uint16_t size) {
+  if (!drawStorageReady || board > BOARD_CHALK || size == 0 ||
+      size > DRAW_OCR_MAX_BYTES) {
+    return false;
+  }
+  File drawing = SPIFFS.open(drawingFilePath(board), FILE_READ);
+  if (!drawing) return false;
+  DrawingFileHeader header = {};
+  bool matches = drawing.read((uint8_t *)&header, sizeof(header)) == sizeof(header) &&
+                 header.magic == DRAW_FILE_MAGIC &&
+                 header.version == DRAW_FILE_VERSION &&
+                 header.board == board && header.drawingId == drawingId &&
+                 header.segmentCount <= DRAW_SEGMENT_MAX &&
+                 drawing.size() == sizeof(header) +
+                     (size_t)header.segmentCount * sizeof(DrawingSegment);
+  drawing.close();
+  if (!matches) return false;
+
+  const char *path = drawingOcrPath(board);
+  const char *tempPath = "/readable.tmp";
+  const char *backupPath = "/readable.bak";
+  File output = SPIFFS.open(tempPath, FILE_WRITE);
+  if (!output) return false;
+  DrawingOcrFileHeader ocrHeader = {};
+  ocrHeader.magic = DRAW_OCR_FILE_MAGIC;
+  ocrHeader.drawingId = drawingId;
+  ocrHeader.textBytes = size;
+  size_t written = output.write((const uint8_t *)&ocrHeader, sizeof(ocrHeader));
+  written += output.write((const uint8_t *)text, size);
+  output.flush();
+  output.close();
+  if (written != sizeof(ocrHeader) + size) {
+    SPIFFS.remove(tempPath);
+    return false;
+  }
+
+  SPIFFS.remove(backupPath);
+  bool hadPrevious = SPIFFS.exists(path);
+  bool movedPrevious = !hadPrevious || SPIFFS.rename(path, backupPath);
+  bool replaced = movedPrevious && SPIFFS.rename(tempPath, path);
+  if (!replaced) {
+    if (hadPrevious && movedPrevious) SPIFFS.rename(backupPath, path);
+    SPIFFS.remove(tempPath);
+    return false;
+  }
+  SPIFFS.remove(backupPath);
+  return true;
+}
+
 static const char *drawingBoardName(int board) {
   if (board == BOARD_GRAPH) return "graph";
   if (board == BOARD_WHITE) return "whiteboard";
   return "chalkboard";
 }
 
-static void setDrawStatus(const char *text, unsigned long durationMs = 0) {
+static void setDrawStatus(const char *text, unsigned long durationMs) {
   copyField(drawStatus, sizeof(drawStatus), text);
   drawStatusUntilMs = durationMs ? millis() + durationMs : 0;
   if (currentScreen == SCREEN_DRAW_CANVAS) {
@@ -2171,6 +2388,10 @@ static bool deleteOldestLocalDrawing() {
   if (oldestBoard < 0 || !SPIFFS.remove(drawingFilePath(oldestBoard))) {
     return false;
   }
+  if (SPIFFS.exists(drawingOcrPath(oldestBoard)) &&
+      !SPIFFS.remove(drawingOcrPath(oldestBoard))) {
+    Serial.println("Could not remove OCR text for an evicted drawing");
+  }
   char status[64];
   snprintf(status, sizeof(status), "Removed oldest local %s board",
            drawingBoardName(oldestBoard));
@@ -2266,6 +2487,120 @@ static bool sendDrawingPacket(const uint8_t *data, size_t size) {
          noticeRemote->writeValue((uint8_t *)data, size, true);
 }
 
+static void sendOcrTextAck(uint32_t drawingId, uint16_t chunkIndex,
+                           bool accepted) {
+  ClearOcrTextAck ack = {};
+  ack.version = CLEAR_LINK_VERSION;
+  ack.kind = CLEAR_KIND_OCR_TEXT_ACK;
+  ack.drawingId = drawingId;
+  ack.chunkIndex = chunkIndex;
+  ack.accepted = accepted ? 1 : 0;
+  if (!sendDrawingPacket((const uint8_t *)&ack, sizeof(ack))) {
+    Serial.println("OCR text acknowledgement could not be sent");
+  }
+}
+
+static void processOcrTextPacket(const uint8_t *data, size_t length) {
+  if (length < 2 || data[0] != CLEAR_LINK_VERSION) return;
+  if (data[1] == CLEAR_KIND_OCR_TEXT_START &&
+      length == sizeof(ClearOcrTextStart)) {
+    ClearOcrTextStart start = {};
+    memcpy(&start, data, sizeof(start));
+    bool accepted = start.board <= BOARD_CHALK &&
+                    start.totalBytes > 0 &&
+                    start.totalBytes <= DRAW_OCR_MAX_BYTES;
+    ocrReceiveActive = accepted;
+    ocrReceiveBoard = start.board;
+    ocrReceiveDrawingId = start.drawingId;
+    ocrReceiveExpectedBytes = accepted ? start.totalBytes : 0;
+    ocrReceiveBytes = 0;
+    ocrReceiveNextChunk = 0;
+    ocrReceiveText[0] = 0;
+    sendOcrTextAck(start.drawingId, 0xFFFF, accepted);
+    return;
+  }
+
+  if (data[1] == CLEAR_KIND_OCR_TEXT_CHUNK &&
+      length >= offsetof(ClearOcrTextChunk, payload)) {
+    ClearOcrTextChunk chunk = {};
+    size_t headerSize = offsetof(ClearOcrTextChunk, payload);
+    memcpy(&chunk, data, length < sizeof(chunk) ? length : sizeof(chunk));
+    bool shapeValid = chunk.payloadSize > 0 &&
+                      chunk.payloadSize <= CLEAR_DRAWING_CHUNK_SIZE &&
+                      length == headerSize + chunk.payloadSize;
+    bool accepted = ocrReceiveActive && shapeValid &&
+                    chunk.drawingId == ocrReceiveDrawingId;
+    if (accepted && chunk.chunkIndex < ocrReceiveNextChunk) {
+      size_t offset = (size_t)chunk.chunkIndex * CLEAR_DRAWING_CHUNK_SIZE;
+      accepted = offset + chunk.payloadSize <= ocrReceiveBytes &&
+                 memcmp(ocrReceiveText + offset, chunk.payload,
+                        chunk.payloadSize) == 0;
+    } else if (accepted && chunk.chunkIndex == ocrReceiveNextChunk) {
+      accepted = (size_t)ocrReceiveBytes + chunk.payloadSize <=
+                 ocrReceiveExpectedBytes;
+      if (accepted) {
+        memcpy(ocrReceiveText + ocrReceiveBytes, chunk.payload,
+               chunk.payloadSize);
+        ocrReceiveBytes += chunk.payloadSize;
+        ocrReceiveNextChunk++;
+      }
+    } else if (accepted) {
+      accepted = false;
+    }
+    sendOcrTextAck(chunk.drawingId, chunk.chunkIndex, accepted);
+    return;
+  }
+
+  if (data[1] == CLEAR_KIND_OCR_TEXT_END &&
+      length == sizeof(ClearOcrTextEnd)) {
+    ClearOcrTextEnd end = {};
+    memcpy(&end, data, sizeof(end));
+    bool accepted = ocrReceiveActive &&
+                    end.drawingId == ocrReceiveDrawingId &&
+                    end.chunkCount == ocrReceiveNextChunk &&
+                    ocrReceiveBytes == ocrReceiveExpectedBytes;
+    if (accepted) {
+      ocrReceiveText[ocrReceiveBytes] = 0;
+      for (uint16_t i = 0; i < ocrReceiveBytes; i++) {
+        if (ocrReceiveText[i] == 0) accepted = false;
+      }
+    }
+    if (accepted) {
+      accepted = saveDrawingOcr(ocrReceiveBoard, ocrReceiveDrawingId,
+                                ocrReceiveText, ocrReceiveBytes);
+    }
+    ocrReceiveActive = false;
+    if (accepted && selectedBoard == ocrReceiveBoard &&
+        currentDrawingId == ocrReceiveDrawingId) {
+      memcpy(drawingOcrText, ocrReceiveText, ocrReceiveBytes + 1);
+      drawingOcrVisible = false;
+      drawingOcrPage = 0;
+      drawingOcrPageCount = 1;
+      if (currentScreen == SCREEN_DRAW_CANVAS) {
+        setDrawStatus("Readable text received. Tap Read to view it");
+      }
+    }
+    if (!accepted) {
+      Serial.println("OCR text was rejected or could not be saved");
+    }
+    sendOcrTextAck(end.drawingId, 0xFFFE, accepted);
+  }
+}
+
+static void serviceOcrTextPacket() {
+  uint8_t packet[sizeof(ClearOcrTextChunk)] = {};
+  uint8_t length = 0;
+  portENTER_CRITICAL(&ocrBleMux);
+  if (ocrBlePacketReady) {
+    length = pendingOcrBleLength;
+    memcpy(packet, pendingOcrBleBytes, length);
+    ocrBlePacketReady = false;
+    pendingOcrBleLength = 0;
+  }
+  portEXIT_CRITICAL(&ocrBleMux);
+  if (length) processOcrTextPacket(packet, length);
+}
+
 static void sendDrawingStep() {
   if (noticeRemote == nullptr || drawingSyncWaitingForAck) return;
   if (drawingSyncState == 0) {
@@ -2342,18 +2677,24 @@ static void finishDrawingSync(bool saved) {
   if (drawingSyncFile) drawingSyncFile.close();
   if (!saved) {
     newBoardAfterSync = false;
+    exitAfterDrawingSync = false;
     setDrawStatus("Teacher card could not save; tap Save to retry");
     return;
   }
   setDrawStatus("Drawing saved to teacher card");
   if (newBoardAfterSync) {
     newBoardAfterSync = false;
+    clearDrawingOcr(selectedBoard);
     drawingSegmentCount = 0;
     currentDrawingId = newDrawingId();
     cursorVisible = false;
     saveDrawingFile();
     paintDrawingCanvas();
     setDrawStatus("New board ready");
+  }
+  if (exitAfterDrawingSync) {
+    exitAfterDrawingSync = false;
+    openDrawingMenu();
   }
 }
 
@@ -2567,6 +2908,7 @@ static void openDrawingCanvas(int board) {
   lastDrawY = -1;
   cursorVisible = false;
   bool loaded = loadDrawingFile(board);
+  loadDrawingOcr(board);
   currentScreen = SCREEN_DRAW_CANVAS;
   if (loaded) {
     setDrawStatus(drawStorageReady ? "Draw here; strokes save on this panel" :
@@ -2580,6 +2922,7 @@ static void resetDrawingBoard() {
   lastDrawX = -1;
   lastDrawY = -1;
   cursorVisible = false;
+  clearDrawingOcr(selectedBoard);
   drawingSegmentCount = 0;
   currentDrawingId = newDrawingId();
   storageSavePending = false;
@@ -2886,6 +3229,8 @@ void setup() {
 // Repeats forever. A finger is read on every pass. The teacher search
 // runs in the background so it does not hold the touch chip.
 void loop() {
+  serviceOcrTextPacket();
+
   if (millis() - clockMs >= 60000) {
     clockMs = millis();
     saveClock();
@@ -2947,7 +3292,7 @@ void loop() {
   int32_t tx = 0;
   int32_t ty = 0;
   bool touchDown = readFinger(&tx, &ty);
-  if (currentScreen == SCREEN_DRAW_CANVAS) {
+  if (currentScreen == SCREEN_DRAW_CANVAS && !drawingOcrVisible) {
     if (!touchDown) {
       finishDrawingStroke();
     } else if (!drawingStroke && !touchWasDown &&
@@ -2957,6 +3302,7 @@ void loop() {
       if (drawY < minDrawY) {
         drawY = minDrawY;
       }
+      clearDrawingOcr(selectedBoard);
       drawingStroke = true;
       lastDrawX = tx;
       lastDrawY = drawY;
@@ -3008,7 +3354,28 @@ void loop() {
       }
     } else if (currentScreen == SCREEN_DRAW_CANVAS) {
       if (inBox(tx, ty, DRAW_BACK_X, DRAW_BACK_Y, DRAW_BACK_W, DRAW_BACK_H)) {
-        openDrawingMenu();
+        if (drawingSegmentCount == 0) {
+          openDrawingMenu();
+        } else if (drawingSyncPending || drawingSyncWaitingForAck) {
+          exitAfterDrawingSync = true;
+          setDrawStatus("Finishing transfer before leaving the board");
+        } else if (prepareDrawingSync(false)) {
+          exitAfterDrawingSync = true;
+          setDrawStatus("Sending drawing before leaving the board");
+        }
+      } else if (inBox(tx, ty, DRAW_READ_X, DRAW_BUTTON_Y, 88, DRAW_BUTTON_H)) {
+        if (drawingOcrVisible) {
+          drawingOcrVisible = false;
+          paintDrawingCanvas();
+        } else if (loadDrawingOcr(selectedBoard)) {
+          drawingOcrVisible = true;
+          paintDrawingCanvas();
+        } else {
+          setDrawStatus("Readable text is not available for this board yet");
+        }
+      } else if (drawingOcrVisible && ty >= DRAW_CANVAS_BOTTOM) {
+        drawingOcrPage = (drawingOcrPage + 1) % drawingOcrPageCount;
+        paintDrawingCanvas();
       } else if (selectedBoard == BOARD_CHALK &&
                  inBox(tx, ty, DRAW_COLOR_X[0], DRAW_COLOR_Y,
                        DRAW_COLOR_X[DRAW_COLOR_COUNT - 1] +

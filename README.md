@@ -15,7 +15,7 @@ The panel opens with **Hello** and the student name, then **What do you need?** 
 
 **I need help** opens help with the work, personal help, or talking in private. Personal help opens Distracted, Worried, Upset, Frustrated, and Uncomfortable. Each of those has a custom message.
 
-**Drawing Board** offers graph paper with a pencil, a whiteboard with a black marker, and a chalkboard with orange, white, blue, or green chalk. The matching utensil follows the touch point. Strokes save to the panel when the student lifts a finger and return after a restart. If panel storage fills, a two-minute warning appears before the oldest panel-local drawing is removed; copies already sent to the teacher are not affected. **Save** sends an SVG copy to the teacher device, **Reset** clears only the panel's current board, and **New** saves a teacher copy before starting a blank panel board. Previously sent drawings are kept when a student resets or starts a new board.
+**Drawing Board** offers graph paper with a pencil, a whiteboard with a black marker, and a chalkboard with orange, white, blue, or green chalk. The matching utensil follows the touch point. Strokes save to the panel when the student lifts a finger and return after a restart. If panel storage fills, a two-minute warning appears before the oldest panel-local drawing is removed; copies already sent to the teacher are not affected. **Save** sends an SVG copy to the teacher device, **Reset** clears only the panel's current board, and **New** saves a teacher copy before starting a blank panel board. **Back** automatically sends a non-empty board and waits for teacher confirmation before returning to the drawing menu, so OCR can run after exit. Previously sent drawings are kept when a student resets or starts a new board. When OCR has returned text for a saved drawing, **Read** switches from the strokes to a readable text view; tap its footer to move through pages, and **Draw** returns to the strokes.
 
 - **Green / Try this** is something the student can do on the panel, such as box breathing, positive self-talk, or the COPE steps. The teacher is told. Box breathing sends when it is opened. **Begin** then counts 4, 3, 2, 1 through breathe in, hold, breathe out, and hold.
 - **Orange / Ask** is a request, such as a break, a walk, a repeated question, or a typed message. A typed message is sent when the student presses **Send**. The teacher can answer yes or no. That answer shows along the bottom of the student panel.
@@ -52,7 +52,18 @@ The screen is a Waveshare 2.4 inch LCD, 240 by 320, SPI. The wiring is listed at
 
 The screen opens on the oldest student. **Next** moves to the following one. **Yes** and **No** answer the student on the screen, and that answer shows on the student panel. Green and orange selections are both stored.
 
-The devices use Bluetooth. They do not join the school Wi-Fi, and they do not use a phone.
+Student notices, drawing transfers, and OCR text return use Bluetooth Low Energy. OCR is optional and requires the teacher device to join a 2.4 GHz Wi-Fi network and a computer on that same network to run the local OCR service. Student devices do not join Wi-Fi, and no phone or cloud OCR provider is used.
+
+### Optional handwriting OCR
+
+The teacher device sends a completed drawing over the local network to `GEEN1400_Teacher/local_ocr_server.py`, which runs Microsoft's TrOCR handwritten-text model on the computer. The teacher returns recognized text to the student panel over Bluetooth Low Energy; the panel stores it beside the original drawing and offers the **Read** view. OCR does not modify or replace the original strokes. The feature recognizes handwriting, not arbitrary writing reliably, and is not guaranteed to identify key ideas, automatically reorganize notes, or make handwriting legible.
+
+1. Install Python 3.10 or later on a computer that can remain on the same trusted 2.4 GHz network as the teacher device. In `GEEN1400_Teacher`, install the packages from `requirements-ocr.txt` using `python -m pip install -r requirements-ocr.txt`.
+2. Start the service with `python local_ocr_server.py`. On first startup, it downloads the TrOCR model and required files, which can take several minutes and requires internet access. Copy the generated token printed by the service.
+3. Copy `CLEAR_Teacher_Config.h.example` to `CLEAR_Teacher_Config.h`. Set the Wi-Fi SSID and password, the computer's LAN IP in `CLEAR_OCR_SERVER_URL` (for example `http://192.168.1.10:8765`), and the same token in `CLEAR_OCR_TOKEN`. Keep the actual configuration file and token private.
+4. Allow inbound TCP port 8765 on the computer's private-network firewall, then compile and upload the teacher sketch again. The server must remain running. OCR requests are queued on the teacher while it processes them; the queue is held in RAM and is lost if the teacher reboots. Stored drawings remain in teacher flash.
+
+The service binds to the local network and protects OCR endpoints with the shared token; use it only on a trusted network. Recognition time depends on the computer, handwriting, and number of lines. BLE delivery happens after recognition, and the panel shows the text only after it has received and stored the complete result.
 
 ### Time
 
