@@ -1,0 +1,8 @@
+#pragma once
+
+// Copy this file to CLEAR_Teacher_Config.h and fill in the values for the
+// teacher device's 2.4 GHz Wi-Fi and the computer running local_ocr_server.py.
+#define CLEAR_WIFI_SSID ""
+#define CLEAR_WIFI_PASSWORD ""
+#define CLEAR_OCR_SERVER_URL "http://192.168.1.10:8765"
+#define CLEAR_OCR_TOKEN "replace-with-the-token-shown-by-local_ocr_server.py"
