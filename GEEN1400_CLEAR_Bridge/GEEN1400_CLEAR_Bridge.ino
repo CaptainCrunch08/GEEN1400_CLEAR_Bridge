@@ -50,6 +50,9 @@
 #include <Preferences.h>   // saves a few settings in flash across restarts
 #include <esp_system.h>
 #include <LovyanGFX.hpp>   // draws text, rectangles, and reads the touch panel
+#if !defined(CONFIG_IDF_TARGET_ESP32S3)
+#error "This sketch requires an ESP32-S3 board. In Arduino IDE select ESP32S3 Dev Module."
+#endif
 #include <lgfx/v1/platforms/esp32s3/Panel_RGB.hpp>
 #include <lgfx/v1/platforms/esp32s3/Bus_RGB.hpp>
 #include "CLEAR_Link.h"    // radio message shared with the teacher sketch
@@ -356,12 +359,12 @@ static const int KEY_SPACE = 4;
 // 6 bits green, 5 bits blue), not ordinary web hex. The names are what
 // they look like on the panel: page background, text, button gray,
 // green for "try this", orange for "ask the teacher", and the footer.
-static const uint16_t COL_BG = 0xF7BD;
-static const uint16_t COL_FG = 0x2610;
-static const uint16_t COL_ROW = 0x6F5F;
-static const uint16_t COL_TRY = 0x6F9B;
-static const uint16_t COL_ASK = 0xFE70;
-static const uint16_t COL_FOOT = 0xE73C;
+static const uint16_t COL_BG = 0x0000;
+static const uint16_t COL_FG = 0xFFFF;
+static const uint16_t COL_ROW = 0x2104;
+static const uint16_t COL_TRY = 0x07E0;
+static const uint16_t COL_ASK = 0xFD20;
+static const uint16_t COL_FOOT = 0x2104;
 
 // One age group in settings. about is the one-line description of its look.
 // Picking a row changes the feelings screens, not only this list.
@@ -1801,7 +1804,7 @@ static void paintDrawingMenu() {
 }
 
 static uint16_t drawingSurfaceColor() {
-  return selectedBoard == BOARD_CHALK ? 0x13A4 : 0xFFFF;
+  return selectedBoard == BOARD_CHALK ? 0x13A4 : 0x0000;
 }
 
 static int paintDrawingOcrTextPage() {
@@ -1862,7 +1865,7 @@ static void paintDrawingCanvas() {
   lcd.fillRect(0, 0, 800, DRAW_HEADER_H, header);
 
   if (!drawingOcrVisible && selectedBoard == BOARD_GRAPH) {
-    const uint16_t gridColor = 0xCE79;
+        const uint16_t gridColor = 0x2104;
     for (int x = 0; x < 800; x += 20) {
       lcd.drawLine(x, DRAW_HEADER_H, x, DRAW_CANVAS_BOTTOM - 1, gridColor);
     }
@@ -1888,7 +1891,7 @@ static void paintDrawingCanvas() {
   paintTopButton(DRAW_RESET_X, DRAW_BUTTON_Y, 104, DRAW_BUTTON_H, "Reset", buttonFill);
   paintTopButton(DRAW_NEW_X, DRAW_BUTTON_Y, 96, DRAW_BUTTON_H, "New", buttonFill);
   paintTopButton(DRAW_READ_X, DRAW_BUTTON_Y, 88, DRAW_BUTTON_H,
-                 drawingOcrVisible ? "Draw" : "Read");
+                 drawingOcrVisible ? "Draw" : "Read", buttonFill);
   if (selectedBoard == BOARD_CHALK) {
     for (int i = 0; i < DRAW_COLOR_COUNT; i++) {
       lcd.fillRoundRect(DRAW_COLOR_X[i], DRAW_COLOR_Y, DRAW_COLOR_W, DRAW_COLOR_H,
@@ -1952,7 +1955,7 @@ static void paintDrawingCanvas() {
 
 static uint16_t drawingInkColor() {
   if (selectedBoard == BOARD_GRAPH) {
-    return 0x2124;
+     return 0xFFFF;;
   }
   return selectedBoard == BOARD_WHITE ? 0x0000 : DRAW_CHALK_COLORS[selectedChalkColor];
 }
