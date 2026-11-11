@@ -10,15 +10,15 @@
   mode cannot show the week as a USB drive.
   Partition: Default with spiffs
 
-  Wiring. The Sense microSD socket already uses D8, D9, and D10, so the
-  screen stays off those pins. Tie the LCD RST pin to 3V3.
+  Wiring. The LCD clock is assigned to GPIO8 as requested. GPIO8 is also
+  connected to the Sense microSD socket's clock line. Tie LCD RST to 3V3.
 
   LCD VCC  3V3
   LCD GND  GND
   LCD DIN  D5   GPIO6
-  LCD CLK  D4   GPIO5
+  LCD CLK  GPIO8
   LCD CS   D3   GPIO4
-  LCD DC   D2   GPIO3
+  LCD DC   GPIO7
   LCD RST  3V3
   LCD BL   D0   GPIO1
 
@@ -55,6 +55,7 @@
 #include <BLEUtils.h>
 #include <BLE2902.h>
 #include <LovyanGFX.hpp>
+#include <Preferences.h>
 #include <string.h>
 #include <time.h>
 #include <sys/time.h>
@@ -86,9 +87,9 @@
 #endif
 
 static const int PIN_LCD_MOSI = 6;
-static const int PIN_LCD_SCK = 5;
+static const int PIN_LCD_SCK = 8;
 static const int PIN_LCD_CS = 4;
-static const int PIN_LCD_DC = 3;
+static const int PIN_LCD_DC = 7;
 static const int PIN_LCD_BL = 1;
 static const int PIN_SD_CS = 21;
 static const int PIN_YES = 2;
@@ -100,6 +101,8 @@ static const uint16_t COL_FG = 0x2610;
 static const uint16_t COL_TRY = 0x6F9B;
 static const uint16_t COL_ASK = 0xFE70;
 static const uint16_t COL_FOOT = 0xE73C;
+static const uint16_t COL_SWITCH_ON = 0x07E0;
+static const uint16_t COL_SLIDER_TRACK = 0x4208;
 
 static const char *LOG_PATH = "/clear.csv";
 static const char *LOG_HEADER =
@@ -179,6 +182,16 @@ public:
 };
 
 static LGFX lcd;
+static Preferences teacherPrefs;
+static volatile bool drawingEnabled = true;
+static uint8_t teacherBrightnessPct = 100;
+static bool settingsScreen = false;
+static uint8_t selectedSetting = 0;
+static bool settingsSaveFailed = false;
+static BLEServer *teacherServer = nullptr;
+static bool studentSettingsPending = true;
+static uint8_t connectedPanels = 0;
+static unsigned long lastSettingsBroadcastMs = 0;
 static bool storageOk = false;
 static bool usbMounted = false;
 static int viewIndex = 0;
@@ -237,6 +250,8 @@ static unsigned long buttonMs = 0;
 static bool yesWasDown = false;
 static bool noWasDown = false;
 static bool nextWasDown = false;
+static unsigned long nextPressedAt = 0;
+static bool nextLongPressHandled = false;
 static BLECharacteristic *replyChar = nullptr;
 static uint8_t *disk = nullptr;
 
@@ -308,8 +323,110 @@ static void formatSent(uint32_t unixTime, char *out, int size) {
   strftime(out, size, "%b %d  %I:%M %p", &parts);
 }
 
+static void applyTeacherBrightness() {
+  uint8_t duty = (uint16_t)teacherBrightnessPct * 255 / 100;
+  analogWrite(PIN_LCD_BL, duty);
+}
+
+static void loadTeacherSettings() {
+  if (!teacherPrefs.begin("teacher", true)) {
+    Serial.println("Could not read teacher settings; using defaults");
+    return;
+  }
+  drawingEnabled = teacherPrefs.getBool("drawEnabled", true);
+  teacherBrightnessPct = teacherPrefs.getUChar("brightness", 100);
+  teacherPrefs.end();
+  if (teacherBrightnessPct < 20) teacherBrightnessPct = 20;
+  if (teacherBrightnessPct > 100) teacherBrightnessPct = 100;
+  teacherBrightnessPct = (teacherBrightnessPct / 10) * 10;
+}
+
+static bool saveTeacherSettings() {
+  if (!teacherPrefs.begin("teacher", false)) {
+    Serial.println("Could not open teacher settings for writing");
+    return false;
+  }
+  size_t drawingWritten =
+    teacherPrefs.putBool("drawEnabled", drawingEnabled);
+  size_t brightnessWritten =
+    teacherPrefs.putUChar("brightness", teacherBrightnessPct);
+  teacherPrefs.end();
+  if (drawingWritten == 0 || brightnessWritten == 0) {
+    Serial.println("Could not save all teacher settings");
+    return false;
+  }
+  return true;
+}
+
+static void paintTeacherSettings() {
+  lcd.fillScreen(COL_BG);
+  lcd.fillRect(0, 0, 240, 40, COL_FOOT);
+  lcd.setTextDatum(textdatum_t::middle_left);
+  lcd.setFont(&fonts::Font4);
+  lcd.setTextColor(COL_FG, COL_FOOT);
+  lcd.drawString("Settings", 12, 20);
+  lcd.setFont(&fonts::Font2);
+
+  lcd.drawRoundRect(8, 54, 224, 62, 8,
+                    selectedSetting == 0 ? COL_FG : COL_FOOT);
+  lcd.setTextColor(COL_FG, COL_BG);
+  lcd.drawString("Student drawing", 16, 73);
+  lcd.drawString(drawingEnabled ? "On" : "Off", 16, 96);
+  const int switchX = 162;
+  const int switchY = 68;
+  const int switchW = 62;
+  const int switchH = 32;
+  uint16_t switchColor = drawingEnabled ? COL_SWITCH_ON : 0x0000;
+  lcd.fillRoundRect(switchX, switchY, switchW, switchH, switchH / 2,
+                    switchColor);
+  lcd.drawRoundRect(switchX, switchY, switchW, switchH, switchH / 2,
+                    drawingEnabled ? COL_SWITCH_ON : COL_FG);
+  int knobX = drawingEnabled ? switchX + switchW - 16 : switchX + 16;
+  lcd.fillCircle(knobX, switchY + switchH / 2, 12, 0xFFFF);
+
+  lcd.drawRoundRect(8, 128, 224, 104, 8,
+                    selectedSetting == 1 ? COL_FG : COL_FOOT);
+  lcd.drawString("Screen brightness", 16, 146);
+  char percent[8];
+  snprintf(percent, sizeof(percent), "%u%%",
+           (unsigned)teacherBrightnessPct);
+  lcd.setTextDatum(textdatum_t::middle_right);
+  lcd.drawString(percent, 222, 146);
+  lcd.setTextDatum(textdatum_t::top_left);
+
+  const int trackX = 18;
+  const int trackY = 182;
+  const int trackW = 204;
+  const int trackH = 12;
+  int fillW = (teacherBrightnessPct - 20) * trackW / 80;
+  lcd.fillRoundRect(trackX, trackY, trackW, trackH, 6, COL_SLIDER_TRACK);
+  if (fillW > 0) {
+    lcd.fillRoundRect(trackX, trackY, fillW, trackH, 6, COL_SWITCH_ON);
+  }
+  int knobX = trackX + fillW;
+  lcd.fillCircle(knobX, trackY + trackH / 2, 9, 0xFFFF);
+  lcd.drawCircle(knobX, trackY + trackH / 2, 9, COL_FG);
+  lcd.drawString("No: -10", 16, 208);
+  lcd.setTextDatum(textdatum_t::top_right);
+  lcd.drawString("Yes: +10", 222, 208);
+
+  lcd.fillRect(0, 276, 240, 44, COL_FOOT);
+  lcd.setTextDatum(textdatum_t::middle_left);
+  lcd.setTextColor(COL_FG, COL_FOOT);
+  lcd.drawString("Yes: On / +10", 8, 288);
+  lcd.drawString("No: Off", 88, 288);
+  lcd.drawString("Next: Select", 154, 288);
+  lcd.drawString(settingsSaveFailed ? "Settings not saved" :
+                                      "Hold Next to close", 54, 308);
+  lcd.setTextDatum(textdatum_t::top_left);
+}
+
 static void paintScreen() {
   lcd.fillScreen(COL_BG);
+  if (settingsScreen) {
+    paintTeacherSettings();
+    return;
+  }
   lcd.fillRect(0, 288, 240, 32, COL_FOOT);
   lcd.setTextDatum(textdatum_t::middle_left);
   lcd.setFont(&fonts::Font2);
@@ -322,6 +439,7 @@ static void paintScreen() {
     lcd.setTextDatum(textdatum_t::top_left);
     lcd.setTextColor(COL_FG, COL_BG);
     lcd.drawString("Waiting for a student", 12, 24);
+    lcd.drawString("Hold Next for settings", 12, 270);
     return;
   }
   if (viewIndex < 0 || viewIndex >= waitingCount) {
@@ -348,7 +466,9 @@ static void paintScreen() {
   lcd.drawString("Issue", 12, 112);
   lcd.drawString(note->feeling, 12, 134);
   lcd.drawString(note->asksTeacher ? "Request" : "Solution", 12, 168);
-  drawWrapped(note->choice, 12, 190, 216, 280);
+  drawWrapped(note->choice, 12, 190, 216, 264);
+  lcd.setFont(&fonts::Font2);
+  lcd.drawString("Hold Next for settings", 12, 270);
 }
 
 static bool writeFreshLog() {
@@ -767,6 +887,9 @@ static void takeNotice(const uint8_t *data, int len) {
       data[1] >= CLEAR_KIND_DRAWING_START &&
       data[1] <= CLEAR_KIND_DRAWING_END &&
       len <= (int)sizeof(ClearDrawingChunk)) {
+    if (!drawingEnabled) {
+      return;
+    }
     uint8_t next = (drawingRingWrite + 1) % DRAWING_RING_MAX;
     if (next == drawingRingRead) {
       if (len >= (int)offsetof(ClearDrawingStart, student)) {
@@ -817,8 +940,8 @@ static NoticeCallbacks noticeCallbacks;
 static void startRadio() {
   BLEDevice::init(CLEAR_BLE_NAME);
   BLEDevice::setMTU(CLEAR_BLE_MTU);
-  BLEServer *server = BLEDevice::createServer();
-  BLEService *service = server->createService(CLEAR_SERVICE_UUID);
+  teacherServer = BLEDevice::createServer();
+  BLEService *service = teacherServer->createService(CLEAR_SERVICE_UUID);
   BLECharacteristic *notice = service->createCharacteristic(
     CLEAR_NOTICE_UUID, BLECharacteristic::PROPERTY_WRITE);
   notice->setCallbacks(&noticeCallbacks);
@@ -830,6 +953,31 @@ static void startRadio() {
   BLEAdvertising *advertising = BLEDevice::getAdvertising();
   advertising->addServiceUUID(CLEAR_SERVICE_UUID);
   advertising->start();
+}
+
+static void serviceStudentSettings() {
+  uint8_t connected = teacherServer == nullptr
+                        ? 0
+                        : (uint8_t)teacherServer->getConnectedCount();
+  if (connected > 0 && connectedPanels == 0) {
+    studentSettingsPending = true;
+  }
+  connectedPanels = connected;
+  if (connected == 0 || replyChar == nullptr) {
+    return;
+  }
+  if (!studentSettingsPending &&
+      millis() - lastSettingsBroadcastMs < 5000) {
+    return;
+  }
+  ClearStudentSettings packet = {};
+  packet.version = CLEAR_LINK_VERSION;
+  packet.kind = CLEAR_KIND_STUDENT_SETTINGS;
+  packet.drawingEnabled = drawingEnabled ? 1 : 0;
+  replyChar->setValue((uint8_t *)&packet, sizeof(packet));
+  replyChar->notify();
+  studentSettingsPending = false;
+  lastSettingsBroadcastMs = millis();
 }
 
 static void sendDrawingResult(uint32_t drawingId, bool saved) {
@@ -1226,6 +1374,19 @@ static void serviceOcrJobs() {
 }
 
 static void drainDrawingPackets() {
+  if (!drawingEnabled) {
+    noInterrupts();
+    drawingQueueOverflow = false;
+    drawingOverflowId = 0;
+    interrupts();
+    drawingRingRead = drawingRingWrite;
+    if (activeDrawingId != 0) {
+      uint32_t rejectedId = activeDrawingId;
+      closeActiveDrawing(true);
+      sendDrawingResult(rejectedId, false);
+    }
+    return;
+  }
   if (drawingQueueOverflow) {
     noInterrupts();
     uint32_t overflowId = drawingOverflowId;
@@ -1275,6 +1436,58 @@ static void cycleStudent() {
   paintScreen();
 }
 
+static void setDrawingPreference(bool enabled) {
+  if (drawingEnabled == enabled) return;
+  drawingEnabled = enabled;
+  settingsSaveFailed = !saveTeacherSettings();
+  studentSettingsPending = true;
+  paintScreen();
+}
+
+static void adjustSelectedSetting(bool increase) {
+  if (selectedSetting == 0) {
+    setDrawingPreference(increase);
+    return;
+  }
+  int brightness = teacherBrightnessPct + (increase ? 10 : -10);
+  if (brightness < 20) brightness = 20;
+  if (brightness > 100) brightness = 100;
+  if (brightness == teacherBrightnessPct) return;
+  teacherBrightnessPct = brightness;
+  applyTeacherBrightness();
+  settingsSaveFailed = !saveTeacherSettings();
+  paintScreen();
+}
+
+static void handleNextButton() {
+  bool down = digitalRead(PIN_NEXT) == LOW;
+  if (down && !nextWasDown) {
+    nextWasDown = true;
+    nextPressedAt = millis();
+    nextLongPressHandled = false;
+  }
+  if (down && nextWasDown && !nextLongPressHandled &&
+      millis() - nextPressedAt >= 900) {
+    nextLongPressHandled = true;
+    settingsScreen = !settingsScreen;
+    settingsSaveFailed = false;
+    paintScreen();
+  }
+  if (!down && nextWasDown) {
+    nextWasDown = false;
+    if (nextLongPressHandled || millis() - nextPressedAt < BUTTON_GAP_MS) {
+      return;
+    }
+    buttonMs = millis();
+    if (settingsScreen) {
+      selectedSetting = (selectedSetting + 1) % 2;
+      paintScreen();
+    } else {
+      cycleStudent();
+    }
+  }
+}
+
 static bool pressed(int pin, bool *wasDown) {
   bool down = digitalRead(pin) == LOW;
   bool hit = down && !*wasDown && (millis() - buttonMs) >= BUTTON_GAP_MS;
@@ -1300,16 +1513,18 @@ static void drainNotices() {
 
 void setup() {
   Serial.begin(115200);
+  loadTeacherSettings();
   setenv("TZ", CLOCK_TZ, 1);
   tzset();
   pinMode(PIN_LCD_BL, OUTPUT);
-  digitalWrite(PIN_LCD_BL, HIGH);
+  applyTeacherBrightness();
   pinMode(PIN_SD_CS, OUTPUT);
   digitalWrite(PIN_SD_CS, HIGH);
   pinMode(PIN_YES, INPUT_PULLUP);
   pinMode(PIN_NO, INPUT_PULLUP);
   pinMode(PIN_NEXT, INPUT_PULLUP);
   lcd.init();
+  applyTeacherBrightness();
   lcd.setRotation(0);
   paintScreen();
   startStorage();
@@ -1321,11 +1536,19 @@ void setup() {
 void loop() {
   drainNotices();
   serviceOcrJobs();
-  if (pressed(PIN_NEXT, &nextWasDown)) {
-    cycleStudent();
-  } else if (pressed(PIN_YES, &yesWasDown)) {
-    answerCurrent(CLEAR_ANSWER_YES);
+  serviceStudentSettings();
+  handleNextButton();
+  if (pressed(PIN_YES, &yesWasDown)) {
+    if (settingsScreen) {
+      adjustSelectedSetting(true);
+    } else {
+      answerCurrent(CLEAR_ANSWER_YES);
+    }
   } else if (pressed(PIN_NO, &noWasDown)) {
-    answerCurrent(CLEAR_ANSWER_NO);
+    if (settingsScreen) {
+      adjustSelectedSetting(false);
+    } else {
+      answerCurrent(CLEAR_ANSWER_NO);
+    }
   }
 }
