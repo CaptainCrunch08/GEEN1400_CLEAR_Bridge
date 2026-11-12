@@ -52,6 +52,8 @@ The screen is a Waveshare 2.4 inch LCD, 240 by 320, SPI. The wiring is listed at
 
 The screen opens on the oldest student. **Next** moves to the following one. **Yes** and **No** answer the student on the screen, and that answer shows on the student panel. Green and orange selections are both stored.
 
+Hold **Next** to open teacher settings. Select **Student drawing** or **Screen brightness** with **Next**; use **Yes** and **No** to change the selected setting, then hold **Next** again to close. Drawing is enabled by default, and changes are saved on the teacher device and sent to the student panel over Bluetooth Low Energy. Brightness is adjustable from 20% to 100%. The LCD clock and data/command connections use GPIO8 and GPIO7, respectively; GPIO8 is also the XIAO ESP32-S3 Sense microSD clock pin.
+
 Student notices, drawing transfers, and OCR text return use Bluetooth Low Energy. OCR is optional and requires the teacher device to join a 2.4 GHz Wi-Fi network and a computer on that same network to run the local OCR service. Student devices do not join Wi-Fi, and no phone or cloud OCR provider is used.
 
 ### Optional handwriting OCR

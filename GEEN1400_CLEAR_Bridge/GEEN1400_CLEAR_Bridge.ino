@@ -499,6 +499,9 @@ struct KeyHit {
 // If they were created inside loop(), they would reset every time.
 static LGFX lcd;
 static Preferences prefs;             // handle for the flash settings
+static bool studentDrawingEnabled = true;
+static ClearStudentSettings pendingStudentSettings = {};
+static volatile bool studentSettingsReady = false;
 static bool expanderOk = false;       // true after the small I2C chip answers
 static int currentScreen = SCREEN_HELLO;
 static int returnScreen = SCREEN_MENU; // screen to reopen when settings closes
@@ -682,6 +685,7 @@ static void loadSettings() {
   String stored = prefs.getString("name", "Connor");
   brightnessPct = prefs.getInt("bright", 80);
   gradeLevel = prefs.getInt("grade", GRADE_LIVE);
+  studentDrawingEnabled = prefs.getBool("drawEnabled", true);
   prefs.end();
 
   int n = 0;
@@ -723,6 +727,7 @@ static void saveSettings() {
   prefs.putString("name", studentName);
   prefs.putInt("bright", brightnessPct);
   prefs.putInt("grade", gradeLevel);
+  prefs.putBool("drawEnabled", studentDrawingEnabled);
   prefs.end();
 }
 
@@ -742,6 +747,20 @@ static void copyField(char *dest, int size, const char *src) {
 // The radio task calls this when a packet arrives. It only stores the
 // packet. Drawing and the screen stay in loop(), where they are safe.
 static void takeLinkPacket(const uint8_t *data, int len) {
+  if (len == (int)sizeof(ClearStudentSettings)) {
+    ClearStudentSettings settings;
+    memcpy(&settings, data, sizeof(settings));
+    if (settings.version != CLEAR_LINK_VERSION ||
+        settings.kind != CLEAR_KIND_STUDENT_SETTINGS ||
+        settings.drawingEnabled > 1) {
+      return;
+    }
+    noInterrupts();
+    pendingStudentSettings = settings;
+    studentSettingsReady = true;
+    interrupts();
+    return;
+  }
   if (len >= 2 && data[0] == CLEAR_LINK_VERSION &&
       (data[1] == CLEAR_KIND_OCR_TEXT_START ||
        data[1] == CLEAR_KIND_OCR_TEXT_CHUNK ||
@@ -2830,7 +2849,7 @@ static void trimName(char *text) {
 static void showMainMenu() {
   crumbTop = 0;
   viewItems = mainItems;
-  viewCount = MAIN_COUNT;
+  viewCount = studentDrawingEnabled ? MAIN_COUNT : MAIN_COUNT - 1;
   viewTitle = "What do you need?";
   openItem = nullptr;
   breathRunning = false;
@@ -2946,6 +2965,9 @@ static void chooseItem(int index) {
     return;
   }
   const Item *item = &viewItems[index];
+  if (item->action == ACT_DRAWING && !studentDrawingEnabled) {
+    return;
+  }
   if (item->action == ACT_DRAWING) {
     openDrawingMenu();
     return;
@@ -3237,6 +3259,31 @@ void loop() {
   if (millis() - clockMs >= 60000) {
     clockMs = millis();
     saveClock();
+  }
+
+  if (studentSettingsReady) {
+    ClearStudentSettings settings;
+    noInterrupts();
+    settings = pendingStudentSettings;
+    studentSettingsReady = false;
+    interrupts();
+    bool enabled = settings.drawingEnabled != 0;
+    if (studentDrawingEnabled != enabled) {
+      studentDrawingEnabled = enabled;
+      prefs.begin("clear", false);
+      prefs.putBool("drawEnabled", studentDrawingEnabled);
+      prefs.end();
+      if (!studentDrawingEnabled &&
+          (currentScreen == SCREEN_DRAW_CANVAS ||
+           currentScreen == SCREEN_DRAW_MENU)) {
+        if (currentScreen == SCREEN_DRAW_CANVAS) {
+          finishDrawingStroke();
+        }
+        showMainMenu();
+      } else if (currentScreen == SCREEN_MENU && crumbTop == 0) {
+        showMainMenu();
+      }
+    }
   }
 
   // A Yes or No can arrive while a finger is down. Apply it here, then
