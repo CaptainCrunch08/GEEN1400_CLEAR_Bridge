@@ -12,6 +12,7 @@
 // asksTeacher 3 means the student said this strategy helped.
 // asksTeacher 4 means the student said not yet.
 // Those two are saved in the week file. They are not a request to answer.
+// Kind 11 carries the teacher's drawing preference to the panel.
 
 #pragma once
 
@@ -29,6 +30,7 @@ static const uint8_t CLEAR_KIND_OCR_TEXT_START = 7;
 static const uint8_t CLEAR_KIND_OCR_TEXT_CHUNK = 8;
 static const uint8_t CLEAR_KIND_OCR_TEXT_END = 9;
 static const uint8_t CLEAR_KIND_OCR_TEXT_ACK = 10;
+static const uint8_t CLEAR_KIND_STUDENT_SETTINGS = 11;
 static const uint8_t CLEAR_ANSWER_NONE = 0;
 static const uint8_t CLEAR_ANSWER_YES = 1;
 static const uint8_t CLEAR_ANSWER_NO = 2;
@@ -131,6 +133,12 @@ struct ClearOcrTextAck {
   uint32_t drawingId;
   uint16_t chunkIndex;
   uint8_t accepted;
+};
+
+struct ClearStudentSettings {
+  uint8_t version;
+  uint8_t kind;
+  uint8_t drawingEnabled;
 };
 #pragma pack(pop)
 

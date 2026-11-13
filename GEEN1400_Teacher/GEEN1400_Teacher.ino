@@ -327,6 +327,11 @@ static int screenMode = MODE_ENTER_PIN;
 static int lookReturn = MODE_ENTER_PIN;
 static int teacherBright = 40;
 static bool teacherDark = false;
+static bool drawingEnabled = true;
+static bool studentSettingsPending = true;
+static unsigned long lastSettingsBroadcastMs = 0;
+static uint8_t connectedPanels = 0;
+static BLEServer *teacherServer = nullptr;
 static char classPin[5] = "";
 static char teacherCode[5] = "";
 static char pinEntry[5] = "";
@@ -467,6 +472,7 @@ static void loadPrivacy() {
   String packed = privacyPrefs.getString("trusted", "");
   teacherBright = privacyPrefs.getInt("bright", 40);
   teacherDark = privacyPrefs.getInt("dark", 0) != 0;
+  drawingEnabled = privacyPrefs.getInt("draw", 1) != 0;
   privacyPrefs.end();
   if (teacherBright < BRIGHT_MIN) {
     teacherBright = BRIGHT_MIN;
@@ -914,6 +920,7 @@ static void saveLook() {
   privacyPrefs.begin("clear-teacher", false);
   privacyPrefs.putInt("bright", teacherBright);
   privacyPrefs.putInt("dark", teacherDark ? 1 : 0);
+  privacyPrefs.putInt("draw", drawingEnabled ? 1 : 0);
   privacyPrefs.end();
 }
 
@@ -999,6 +1006,10 @@ static void paintLook() {
   lcd.drawString("Light", 64, 198);
   lcd.setTextColor(COL_FG, darkFill);
   lcd.drawString("Dark", 176, 198);
+  uint16_t drawFill = drawingEnabled ? COL_TRY : COL_FOOT;
+  lcd.fillRoundRect(12, 232, 216, 44, 8, drawFill);
+  lcd.setTextColor(teacherDark ? COL_FG : (uint16_t)0x0000, drawFill);
+  lcd.drawString(drawingEnabled ? "Drawing on" : "Drawing off", 120, 254);
   lcd.setTextDatum(textdatum_t::top_left);
 }
 
@@ -1708,8 +1719,8 @@ static void startRadio() {
   BLESecurity::setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
   BLESecurity::setRespEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
   BLESecurity::setPassKey(true, classPasskey());
-  BLEServer *server = BLEDevice::createServer();
-  BLEService *service = server->createService(CLEAR_SERVICE_UUID);
+  teacherServer = BLEDevice::createServer();
+  BLEService *service = teacherServer->createService(CLEAR_SERVICE_UUID);
   BLECharacteristic *notice = service->createCharacteristic(
     CLEAR_NOTICE_UUID, BLECharacteristic::PROPERTY_WRITE);
   notice->setAccessPermissions(ESP_GATT_PERM_WRITE_ENC_MITM);
@@ -1723,6 +1734,33 @@ static void startRadio() {
   BLEAdvertising *advertising = BLEDevice::getAdvertising();
   advertising->addServiceUUID(CLEAR_SERVICE_UUID);
   advertising->start();
+}
+
+// Tell connected panels whether drawing is on. A newly connected
+// panel gets the current choice, then the same choice repeats slowly.
+static void serviceStudentSettings() {
+  uint8_t connected = teacherServer == nullptr
+                        ? 0
+                        : (uint8_t)teacherServer->getConnectedCount();
+  if (connected > 0 && connectedPanels == 0) {
+    studentSettingsPending = true;
+  }
+  connectedPanels = connected;
+  if (connected == 0 || replyChar == nullptr) {
+    return;
+  }
+  if (!studentSettingsPending &&
+      millis() - lastSettingsBroadcastMs < 5000) {
+    return;
+  }
+  ClearStudentSettings packet = {};
+  packet.version = CLEAR_LINK_VERSION;
+  packet.kind = CLEAR_KIND_STUDENT_SETTINGS;
+  packet.drawingEnabled = drawingEnabled ? 1 : 0;
+  replyChar->setValue((uint8_t *)&packet, sizeof(packet));
+  replyChar->notify();
+  studentSettingsPending = false;
+  lastSettingsBroadcastMs = millis();
 }
 
 static void sendDrawingResult(uint32_t drawingId, bool saved) {
@@ -2331,9 +2369,10 @@ void loop() {
     return;
   }
   if (servicesStarted) {
-    drainNotices();
-    serviceOcrJobs();
-    serviceNetworkClock();
+      drainNotices();
+      serviceOcrJobs();
+      serviceStudentSettings();
+      serviceNetworkClock();
     if ((long)(millis() - clockSaveMs) >= 60000) {
       saveTeacherClock();
       clockSaveMs = millis();
@@ -2369,6 +2408,10 @@ void loop() {
         }
         setBright(BRIGHT_MIN + rel * (BRIGHT_MAX - BRIGHT_MIN) / 136);
       }
+    } else if (ty >= 232 && ty < 276) {
+      drawingEnabled = !drawingEnabled;
+      studentSettingsPending = true;
+      saveLook();
     } else if (ty >= 176 && ty < 220) {
       bool nextDark = tx >= 124;
       if (nextDark != teacherDark) {

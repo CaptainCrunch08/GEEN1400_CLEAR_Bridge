@@ -661,6 +661,9 @@ struct KeyHit {
 // If they were created inside loop(), they would reset every time.
 static LGFX lcd;
 static Preferences prefs;             // handle for the flash settings
+static bool studentDrawingEnabled = true;
+static ClearStudentSettings pendingStudentSettings = {};
+static volatile bool studentSettingsReady = false;
 static bool expanderOk = false;       // true after the small I2C chip answers
 static int currentScreen = SCREEN_HELLO;
 static int thermoZone = 1;
@@ -1036,6 +1039,7 @@ static void loadSettings() {
   copyShort(stepText[1], sizeof(stepText[1]), prefs.getString("sch1", ""), "Learn");
   copyShort(stepText[2], sizeof(stepText[2]), prefs.getString("sch2", ""), "Break");
   copyShort(stepText[3], sizeof(stepText[3]), prefs.getString("sch3", ""), "Pack up");
+  studentDrawingEnabled = prefs.getBool("drawEnabled", true);
   prefs.end();
   classPinSet = pin.length() == 4;
   if (classPinSet) {
@@ -1143,6 +1147,7 @@ static void saveSettings() {
   } else {
     prefs.putString("name", studentName);
   }
+  prefs.putBool("drawEnabled", studentDrawingEnabled);
   prefs.end();
 }
 
@@ -1162,6 +1167,20 @@ static void copyField(char *dest, int size, const char *src) {
 // The radio task calls this when a packet arrives. It only stores the
 // packet. Drawing and the screen stay in loop(), where they are safe.
 static void takeLinkPacket(const uint8_t *data, int len) {
+  if (len == (int)sizeof(ClearStudentSettings)) {
+    ClearStudentSettings settings;
+    memcpy(&settings, data, sizeof(settings));
+    if (settings.version != CLEAR_LINK_VERSION ||
+        settings.kind != CLEAR_KIND_STUDENT_SETTINGS ||
+        settings.drawingEnabled > 1) {
+      return;
+    }
+    noInterrupts();
+    pendingStudentSettings = settings;
+    studentSettingsReady = true;
+    interrupts();
+    return;
+  }
   if (len >= 2 && data[0] == CLEAR_LINK_VERSION &&
       (data[1] == CLEAR_KIND_OCR_TEXT_START ||
        data[1] == CLEAR_KIND_OCR_TEXT_CHUNK ||
@@ -4193,7 +4212,7 @@ static void paintZone() {
   if (!calmMode) drawHeart(206, HUB_Y1 + 28);
   paintHubCard(408, HUB_Y1, HUB_W, HUB_H, softFill(COL_CREAM), "Ask for Help", "Tell your teacher what you need");
   if (!calmMode) drawHand(594, HUB_Y1 + 28);
-  if (expressOn) {
+  if (expressOn && studentDrawingEnabled) {
     paintHubCard(20, HUB_Y2, HUB_W, HUB_H, softFill(COL_LILAC), "Draw or Write", "Express yourself another way");
     if (!calmMode) drawPencil(206, HUB_Y2 + 28);
     paintHubCard(408, HUB_Y2, HUB_W, HUB_H, softFill(COL_PALE), "Tools", "Race, schedule, and first then");
@@ -5436,6 +5455,9 @@ static void chooseItem(int index) {
     return;
   }
   const Item *item = &viewItems[index];
+  if (item->action == ACT_DRAWING && !studentDrawingEnabled) {
+    return;
+  }
   if (item->action == ACT_DRAWING) {
     openDrawingMenu();
     return;
@@ -6490,6 +6512,31 @@ void loop() {
     saveClock();
   }
 
+  if (studentSettingsReady) {
+    ClearStudentSettings settings;
+    noInterrupts();
+    settings = pendingStudentSettings;
+    studentSettingsReady = false;
+    interrupts();
+    bool enabled = settings.drawingEnabled != 0;
+    if (studentDrawingEnabled != enabled) {
+      studentDrawingEnabled = enabled;
+      prefs.begin("clear", false);
+      prefs.putBool("drawEnabled", studentDrawingEnabled);
+      prefs.end();
+      if (!studentDrawingEnabled &&
+          (currentScreen == SCREEN_DRAW_CANVAS ||
+           currentScreen == SCREEN_DRAW_MENU)) {
+        if (currentScreen == SCREEN_DRAW_CANVAS) {
+          finishDrawingStroke();
+        }
+        showMainMenu();
+      } else if (currentScreen == SCREEN_MENU && crumbTop == 0) {
+        showMainMenu();
+      }
+    }
+  }
+
   // A Yes or No can arrive while a finger is down. Apply it here, then
   // refresh the footer. Settings and the keyboard have no footer.
   if (replyReady) {
@@ -6732,11 +6779,11 @@ void loop() {
         bridgerSay("I can ask for you.");
         currentScreen = SCREEN_ASK;
         paintAsk();
-      } else if (expressOn && inBox(tx, ty, 20, HUB_Y2, HUB_W, HUB_H)) {
+      } else if (expressOn && studentDrawingEnabled && inBox(tx, ty, 20, HUB_Y2, HUB_W, HUB_H)) {
         bridgerSay("Draw or write.");
         currentScreen = SCREEN_EXPRESS;
         paintExpress();
-      } else if (inBox(tx, ty, expressOn ? 408 : 20, HUB_Y2, expressOn ? HUB_W : 760, HUB_H)) {
+      } else if (inBox(tx, ty, (expressOn && studentDrawingEnabled) ? 408 : 20, HUB_Y2, (expressOn && studentDrawingEnabled) ? HUB_W : 760, HUB_H)) {
         bridgerSay("Pick a tool.");
         currentScreen = SCREEN_PLAN;
         paintPlan();
