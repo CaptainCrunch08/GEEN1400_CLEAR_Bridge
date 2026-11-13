@@ -1,0 +1,2048 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CLEAR screen preview</title>
+<style>
+  body { margin: 0; background: #1c1c1c; color: #eee; font-family: "Segoe UI", sans-serif; }
+  header { padding: 12px 16px 4px; }
+  header h1 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+  header p { margin: 0; color: #bbb; font-size: 14px; max-width: 920px; }
+  .row { display: flex; gap: 24px; align-items: flex-start; padding: 16px; flex-wrap: wrap; }
+  figure { margin: 0; }
+  figcaption { font-size: 13px; color: #bbb; margin-bottom: 6px; }
+  canvas { background: #000; display: block; cursor: pointer; image-rendering: auto; }
+  #student { width: min(800px, 68vw); height: auto; }
+  #teacher { width: min(240px, 24vw); height: auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>CLEAR screen preview</h1>
+  <p>These are the real pixel sizes: the student panel is 800 by 480, and the teacher screen is 240 by 320. In this preview the class PIN is 2580 and the teacher code is 1469. Click the glass. A choice on the student panel shows on the teacher screen after both codes. This page does not talk to the boards.</p>
+</header>
+<div class="row">
+  <figure>
+    <figcaption>Student panel · 800 × 480</figcaption>
+    <canvas id="student" width="800" height="480"></canvas>
+  </figure>
+  <figure>
+    <figcaption>Teacher screen · 240 × 320</figcaption>
+    <canvas id="teacher" width="240" height="320"></canvas>
+  </figure>
+</div>
+<script>
+const rgb = (c) => {
+  const r = ((c >> 11) & 31) * 255 / 31;
+  const g = ((c >> 5) & 63) * 255 / 63;
+  const b = (c & 31) * 255 / 31;
+  return `rgb(${r | 0},${g | 0},${b | 0})`;
+};
+
+const S = {
+  BG: rgb(0x0000), FG: rgb(0xFFFF), ROW: rgb(0x2104),
+  TRY: rgb(0x07E0), ASK: rgb(0xFD20), FOOT: rgb(0x2104)
+};
+const T = {
+  BG: rgb(0xF7BD), FG: rgb(0x2610), TRY: rgb(0x6F9B),
+  ASK: rgb(0xFE70), NO: rgb(0xFBE4), FOOT: rgb(0xE73C)
+};
+
+const OPEN = 0, TRY = 1, ASK = 2, TYPE = 3, BREATHE = 4, WRITE = 5, DRAW = 6;
+const ASK_HELP = "Your teacher can say yes or no.\nThey see it on their device.";
+const TYPE_HELP = "Type a short message, then press Send.";
+const BREATH_HELP = "Breathe in for 4 seconds.\nHold for 4 seconds.\nBreathe out for 4 seconds.\nHold for 4 seconds.\nPress Begin and count along.";
+
+const item = (label, topic, help, little, action, lead, kids) =>
+  ({ label, topic, help, little, action, lead: lead || null, kids: kids || null });
+
+const distracted = [
+  item("Box breathing", "Distracted", BREATH_HELP, "Blow", BREATHE),
+  item("Quieter class please", "Distracted", ASK_HELP, "Quiet", ASK),
+  item("Ask for a fidget toy", "Distracted", ASK_HELP, "Fidget", ASK),
+  item("Custom message", "Distracted", TYPE_HELP, "Write", TYPE)
+];
+const worried = [
+  item("Talk to the teacher", "Worried", ASK_HELP, "Talk", ASK),
+  item("Box breathing", "Worried", BREATH_HELP, "Blow", BREATHE),
+  item("Positive self-talk", "Worried", "1. Notice the words in your head.\n2. Ask: is that fair?\n3. Say one kinder true sentence.", "Kind", TRY),
+  item("Put the worry outside", "Worried", "1. Name the worry.\n2. Say it like it is outside you.\n3. Name one thing you can do.", "Worry", TRY),
+  item("Custom message", "Worried", TYPE_HELP, "Write", TYPE)
+];
+const upset = [
+  item("Could I take a walk?", "Upset", ASK_HELP, "Walk", ASK),
+  item("Box breathing", "Upset", BREATH_HELP, "Blow", BREATHE),
+  item("Talk in private", "Upset", ASK_HELP, "Private", ASK),
+  item("Talk to somebody", "Upset", "Ask to talk with somebody, such as a counselor.", "Someone", ASK),
+  item("Use the COPE steps", "Upset", "C  Calm your body.\nO  Notice the thought. Change it.\nP  Plan one other thing to do.\nE  Ask: do I feel cooler or hotter?", "COPE", TRY),
+  item("Custom message", "Upset", TYPE_HELP, "Write", TYPE)
+];
+const frustrated = [
+  item("Box breathing", "Frustrated", BREATH_HELP, "Blow", BREATHE),
+  item("Could I take a walk?", "Frustrated", ASK_HELP, "Walk", ASK),
+  item("Custom message", "Frustrated", TYPE_HELP, "Write", TYPE)
+];
+const uncomfortable = [
+  item("Write how you feel", "Uncomfortable", "Write a few words on the next screen.\nYour teacher sees that you wrote.", "Write", WRITE),
+  item("Ask to take a break", "Uncomfortable", ASK_HELP, "Break", ASK),
+  item("Custom message", "Uncomfortable", TYPE_HELP, "Message", TYPE)
+];
+const personal = [
+  item("Distracted", "Distracted", null, "Busy", OPEN, null, distracted),
+  item("Worried", "Worried", null, "Worried", OPEN, null, worried),
+  item("Upset", "Upset", null, "Upset", OPEN, null, upset),
+  item("Frustrated", "Frustrated", null, "Mad", OPEN, null, frustrated),
+  item("Uncomfortable", "Uncomfortable", null, "Uneasy", OPEN, null, uncomfortable)
+];
+const material = [
+  item("Ask a friend for help", "Help", "Try asking a friend\nbefore you ask the teacher.", "Friend", TRY),
+  item("Explain the last problem", "Help", ASK_HELP, "Again", ASK),
+  item("Explain this problem", "Help", ASK_HELP, "Explain", ASK),
+  item("I need more time", "Help", ASK_HELP, "Time", ASK),
+  item("Repeat the directions", "Help", ASK_HELP, "Again", ASK),
+  item("I need teacher help", "Help", ASK_HELP, "Help", ASK),
+  item("Show another example", "Help", ASK_HELP, "Example", ASK)
+];
+const questions = [
+  item("Repeat a part", "Question", "Type the part you want repeated.", "Part", TYPE, "Repeat the part about "),
+  item("Repeat the last question", "Question", ASK_HELP, "Again", ASK),
+  item("Repeat one question", "Question", "Type which question.", "Which", TYPE, "Question about "),
+  item("Ask another student", "Question", "Try this if the teacher is not speaking.", "Friend", TRY),
+  item("Try raising your hand", "Question", "Put your hand up and wait.", "Hand", TRY),
+  item("Custom message", "Question", TYPE_HELP, "Write", TYPE)
+];
+const help = [
+  item("Help with the material", "Help", null, "Work", OPEN, null, material),
+  item("I need personal help", "Help", null, "Me", OPEN, null, personal),
+  item("Talk in private", "Help", ASK_HELP, "Private", ASK)
+];
+const mainItems = [
+  item("I have a question", "Question", null, "Ask", OPEN, null, questions),
+  item("I need a break", "Break", ASK_HELP, "Break", ASK),
+  item("I need help", "Help", null, "Help", OPEN, null, help),
+  item("Drawing Board", "Drawing Board", null, "Draw", DRAW)
+];
+const grades = [
+  ["K", "Biggest letters"],
+  ["1 - 2", "Big letters"],
+  ["3 - 4", "More words"],
+  ["5", "Smaller type"]
+];
+
+const student = document.getElementById("student");
+const teacher = document.getElementById("teacher");
+const sc = student.getContext("2d");
+const tc = teacher.getContext("2d");
+
+const PREVIEW_PIN = "2580";
+const PREVIEW_CODE = "1469";
+const PAD_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "C", "0", "<"];
+
+const ui = {
+  screen: "lock",
+  zone: 1,
+  pinEntry: "",
+  teacherStep: "pin",
+  teacherBack: "pin",
+  teacherEntry: "",
+  teacherBright: 40,
+  teacherDark: false,
+  name: "Connor",
+  grade: 2,
+  bright: 80,
+  crumbs: [],
+  items: mainItems,
+  title: "What do you need?",
+  open: null,
+  status: "Ready",
+  bridger: true,
+  express: true,
+  lastCope: "ground",
+  bridgerLine: "Hi! I'm Bridger.",
+  typed: "",
+  typeMode: "name",
+  write: ["", "", ""],
+  writeSlot: 0,
+  board: 0,
+  chalk: 1,
+  strokes: [],
+  drawing: false,
+  last: null,
+  queue: [],
+  view: 0,
+  breath: false,
+  race: false,
+  raceStart: 0,
+  raceDone: false,
+  expressOn: false,
+  expressStart: 0,
+  expressPaused: false,
+  expressPause: 0,
+  breathOffer: false,
+  breathStart: 0,
+  seeLooks: ["green", "pointy", "round"],
+  settingsPass: "",
+  passFirst: "",
+  passStep: "choose",
+  first: "Work",
+  then: "Break",
+  firstSide: 0,
+  steps: ["Arrive", "Learn", "Break", "Pack up"],
+  step: 0,
+  schedEdit: 0,
+  tools: { ground: true, first: true, sched: true, breath: true },
+  acc: [true, true, false, false, true, false, false, false, false, false],
+  calm: false,
+  dark: false,
+  teacherName: "Teacher",
+  lastChoice: "",
+  order: [0, 1, 2, 3],
+  buzz: ""
+};
+
+const asks = (it) => it.action === ASK || it.action === TYPE;
+const youngBreath = () => ui.grade <= 1;
+const labelOf = (it) => {
+  if (it.action === BREATHE && youngBreath()) return ui.grade === 0 ? "Blow" : "Candle blowing";
+  return (ui.grade === 0 && it.little) ? it.little : it.label;
+};
+const home = () => ui.crumbs.length === 0 && ui.items === mainItems;
+
+function roundRect(ctx, x, y, w, h, r, fill) {
+  ctx.fillStyle = fill;
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, r);
+  ctx.fill();
+}
+function text(ctx, str, x, y, size, color, align, base) {
+  ctx.fillStyle = color;
+  ctx.font = `${size}px "Segoe UI", sans-serif`;
+  ctx.textAlign = align || "left";
+  ctx.textBaseline = base || "middle";
+  ctx.fillText(str, x, y);
+}
+function wrap(ctx, str, x, y, maxW, size, color, bottom) {
+  ctx.fillStyle = color;
+  ctx.font = `${size}px "Segoe UI", sans-serif`;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  let cx = x, cy = y;
+  const lineH = size + 8;
+  String(str || "").split("\n").forEach((line, li) => {
+    if (li) { cx = x; cy += lineH; }
+    line.split(" ").filter(Boolean).forEach((word) => {
+      const w = ctx.measureText(word + " ").width;
+      if (cx > x && cx + w > x + maxW) { cx = x; cy += lineH; }
+      if (cy >= bottom) return;
+      ctx.fillText(word, cx, cy);
+      cx += w;
+    });
+  });
+}
+function gearTooth(ctx, cx, cy, x1, y1, x2, y2, x3, y3) {
+  ctx.beginPath();
+  ctx.moveTo(cx + x1, cy + y1);
+  ctx.lineTo(cx + x2, cy + y2);
+  ctx.lineTo(cx + x3, cy + y3);
+  ctx.closePath();
+  ctx.fill();
+}
+function applyLook() {
+  if (ui.dark) {
+    S.BG = "#101418";
+    S.FG = "#e6e6e6";
+    S.ROW = "#2a3138";
+    S.TRY = "#1d4a32";
+    S.ASK = "#8a4b20";
+    S.FOOT = "#1c242c";
+  } else {
+    S.BG = "#ffffff";
+    S.FG = "#1a1a1a";
+    S.ROW = "#e4e4e4";
+    S.TRY = "#3caf5a";
+    S.ASK = "#e07a2f";
+    S.FOOT = "#d5d5d5";
+  }
+}
+function pageBg() { return S.BG; }
+function pageInk() { return S.FG; }
+function teacherLabel() { return ui.teacherName || "Teacher"; }
+function cardFill(color) {
+  if (ui.calm) return ui.dark ? "#3a3a3a" : "#d8d8d8";
+  if (!ui.dark) return color;
+  if (color === "#e7f4ee") return "#1c3a2c";
+  if (color === "#fbf6ec") return "#3a3228";
+  if (color === "#eee9f6") return "#2c2838";
+  if (color === "#e7f3fb") return "#243040";
+  return "#2a3138";
+}
+function gear(ctx, x, y, w, h) {
+  const btn = ui.dark ? "#4a5560" : "#dedede";
+  const metal = ui.dark ? "#d5dbe0" : "#5c6570";
+  roundRect(ctx, x, y, w, h, 12, btn);
+  const cx = x + w / 2, cy = y + h / 2;
+  ctx.fillStyle = metal;
+  for (let i = 0; i < 8; i++) {
+    const a = i * Math.PI / 4;
+    ctx.beginPath();
+    ctx.arc(cx + Math.cos(a) * 11, cy + Math.sin(a) * 11, 4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.beginPath();
+  ctx.arc(cx, cy, 8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = btn;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+  ctx.fill();
+}
+const toolImg = new Image();
+toolImg.onload = function () {
+  if (typeof paintStudent === "function") paintStudent();
+};
+toolImg.src = "toolbox.png";
+function drawToolbox(cx, cy) {
+  if (!toolImg.complete || !toolImg.naturalWidth) return;
+  const w = 34, h = 33;
+  const stamp = document.createElement("canvas");
+  stamp.width = w;
+  stamp.height = h;
+  const g = stamp.getContext("2d");
+  g.drawImage(toolImg, 0, 0, w, h);
+  g.globalCompositeOperation = "source-in";
+  g.fillStyle = ui.dark ? "#e6e6e6" : "#111";
+  g.fillRect(0, 0, w, h);
+  sc.drawImage(stamp, cx - w / 2, cy - h / 2);
+}
+const logoImg = new Image();
+logoImg.onload = function () {
+  if (typeof paintStudent === "function") paintStudent();
+};
+logoImg.src = "logo-heart.png";
+function drawLogo(ctx, y) {
+  if (logoImg.complete && logoImg.naturalWidth) {
+    ctx.drawImage(logoImg, 4, y - 22, 48, 45);
+  }
+  text(ctx, "CLEAR Bridge", 56, y, 16, ui.dark ? "#9aa3ad" : "#666", "left");
+}
+function bridgerSay(line) {
+  if (line) ui.bridgerLine = line;
+}
+const ZONE_LINES = ["Slow and sleepy.", "Ready to learn.", "A little wiggly.", "Energy is big.", "Big feelings."];
+function paintBridger(ctx) {
+  if (!ui.bridger || ui.calm || ui.screen === "race") return;
+  const fur = "#c47a45";
+  const x = 692, y = 408;
+  ctx.fillStyle = fur;
+  ctx.beginPath();
+  ctx.arc(x + 14, y + 10, 9, 0, Math.PI * 2);
+  ctx.arc(x + 46, y + 10, 9, 0, Math.PI * 2);
+  ctx.fill();
+  roundRect(ctx, x, y + 12, 60, 46, 12, fur);
+  roundRect(ctx, x + 8, y + 52, 14, 10, 4, fur);
+  roundRect(ctx, x + 36, y + 52, 14, 10, 4, fur);
+  roundRect(ctx, x + 54, y + 26, 28, 18, 6, fur);
+  ctx.strokeStyle = "#5c3317";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(x + 56, y + 31); ctx.lineTo(x + 74, y + 41);
+  ctx.moveTo(x + 62, y + 31); ctx.lineTo(x + 76, y + 39);
+  ctx.moveTo(x + 56, y + 41); ctx.lineTo(x + 72, y + 31);
+  ctx.moveTo(x + 64, y + 41); ctx.lineTo(x + 76, y + 33);
+  ctx.stroke();
+  ctx.fillStyle = "#111";
+  ctx.beginPath();
+  ctx.arc(x + 22, y + 32, 3, 0, Math.PI * 2);
+  ctx.arc(x + 38, y + 32, 3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#ffb3c7";
+  ctx.beginPath();
+  ctx.arc(x + 12, y + 40, 4, 0, Math.PI * 2);
+  ctx.arc(x + 48, y + 40, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#111";
+  ctx.beginPath();
+  ctx.arc(x + 30, y + 38, 3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "#111";
+  ctx.beginPath();
+  ctx.moveTo(x + 24, y + 44); ctx.lineTo(x + 30, y + 47); ctx.lineTo(x + 36, y + 44);
+  ctx.stroke();
+  const box = bubbleBox();
+  const bubble = ui.dark ? "#fff" : "#dedbde";
+  roundRect(ctx, box.x, 416, box.w, 48, 16, bubble);
+  ctx.fillStyle = bubble;
+  ctx.beginPath();
+  ctx.moveTo(box.x + box.w, 430); ctx.lineTo(box.x + box.w, 450); ctx.lineTo(box.x + box.w + 18, 440);
+  ctx.closePath();
+  ctx.fill();
+  text(ctx, ui.bridgerLine || "Hi! I'm Bridger.", box.x + box.w / 2, 440, 14, "#000", "center");
+}
+function bubbleBox() {
+  if (!ui.bridger || ui.calm || ui.screen === "race") return { x: 800, w: 0 };
+  sc.font = '14px "Segoe UI", sans-serif';
+  const textW = sc.measureText(ui.bridgerLine || "Hi! I'm Bridger.").width;
+  let w = Math.max(128, Math.min(300, textW + 36));
+  let x = 676 - w;
+  if (x < 248) { x = 248; w = 676 - 248; }
+  return { x, w };
+}
+function clipStatus(str, maxW) {
+  sc.font = '16px "Segoe UI", sans-serif';
+  let s = str || "";
+  while (s.length > 3 && sc.measureText(s).width > maxW) {
+    s = s.slice(0, -4) + "...";
+  }
+  return s;
+}
+function calmScreen() {
+  return ui.screen === "zone" || ui.screen === "soothe" || ui.screen === "ask" || ui.screen === "express" || ui.screen === "feed" || ui.screen === "race" || ui.screen === "plan";
+}
+function hasHelp() {
+  return !["lock", "spass", "settings", "stools", "order", "keys", "draw", "drawmenu", "firstpick", "schedpick", "accpick"].includes(ui.screen);
+}
+function footer(ctx) {
+  applyLook();
+  const calm = calmScreen();
+  ctx.fillStyle = pageBg();
+  ctx.fillRect(0, calm ? 400 : 420, 800, calm ? 80 : 60);
+  if (hasHelp()) {
+    const helpFill = ui.dark ? "#ff8c1a" : S.ASK;
+    roundRect(ctx, 8, 424, 96, 48, 10, helpFill);
+    text(ctx, "Help", 56, 448, 16, "#111", "center");
+    roundRect(ctx, 112, 424, 108, 48, 10, calm ? "#c8c8c8" : S.ROW);
+    text(ctx, "Hear it", 166, 448, 16, calm ? "#000" : S.FG, "center");
+  }
+  const room = bubbleBox().x - 244;
+  text(ctx, clipStatus(ui.status, room), 232, calm ? 432 : 448, 16, ui.dark ? "#9aa3ad" : "#666", "left", "middle");
+  paintBridger(ctx);
+}
+function markBuzz(choice, aid) {
+  if (choice === "I need help" || choice === "I need my teacher") ui.buzz = "Buzz: help";
+  else if (aid) ui.buzz = "Buzz: 2 short";
+  else ui.buzz = "Buzz: 1 second";
+}
+function instructionLine() {
+  if (ui.screen === "ground") {
+    if ((ui.ground || 0) >= 5) return "Find a sound around you.";
+    if ((ui.ground || 0) >= 3) return "Find something to touch.";
+    return "Find something to see.";
+  }
+  if (ui.screen === "breath") return ui.breath ? "In, hold, out, hold." : "Press begin and breathe with me.";
+  if (ui.screen === "first") return "Do the first part, then the next.";
+  if (ui.screen === "sched") return "This block is now. Then the next.";
+  if (ui.screen === "zone") return "Pick what would help right now.";
+  if (ui.screen === "soothe") return "Pick a calming tool.";
+  if (ui.screen === "plan") return "Pick a tool.";
+  if (ui.screen === "race") return "Bridger walks for five minutes. He will wait.";
+  if (ui.screen === "ask") return "Tap what you need to ask.";
+  if (ui.screen === "express") return "Draw on the board or write.";
+  if (ui.screen === "feed") return "Did that help?";
+  if (ui.screen === "thermo") return "Slide to your feeling, then tap This is me.";
+  return "Hello. Show how you feel.";
+}
+function rowGeom(count) {
+  const top = home() ? 56 : 64;
+  const bottom = home() ? 414 : 412;
+  const gaps = count > 1 ? (count - 1) * 6 : 0;
+  let h = Math.floor((bottom - top - gaps) / Math.max(count, 1));
+  if (!home()) {
+    const cap = ui.grade === 0 ? 72 : ui.grade === 1 ? 96 : ui.grade === 3 ? 78 : 64;
+    h = Math.min(h, cap);
+  }
+  return { top, h };
+}
+function markRequest() {
+  ui.status = ui.teacherStep === "open" ? "Seen" : "Pending";
+}
+function notify(it, choice) {
+  ui.queue.push({
+    student: ui.name,
+    feeling: it.topic,
+    choice,
+    asks: asks(it)
+  });
+  ui.view = 0;
+  ui.lastChoice = choice;
+  markRequest();
+  markBuzz(choice, false);
+  paintTeacher();
+}
+function showDetail(it) {
+  ui.open = it;
+  ui.screen = "detail";
+  paintStudent();
+}
+
+function paintHello() {
+  sc.fillStyle = S.BG;
+  sc.fillRect(0, 0, 800, 480);
+  text(sc, "Hello, " + ui.name, 400, ui.grade <= 1 ? 150 : 170, 28, S.FG, "center");
+  text(sc, "How big are your feelings?", 400, ui.grade <= 1 ? 210 : 230, 16, S.FG, "center");
+  footer(sc);
+  gear(sc, 732, 8, 56, 44);
+}
+function paintList() {
+  const g = rowGeom(ui.items.length);
+  const young = ui.grade <= 1;
+  sc.fillStyle = S.BG;
+  sc.fillRect(0, 0, 800, 480);
+  text(sc, ui.title, 24, 32, ui.grade === 3 ? 16 : 26, S.FG, "left");
+  if (ui.crumbs.length) roundRect(sc, 584, 8, 140, 44, 8, S.ROW), text(sc, "Back", 654, 30, 16, S.FG, "center");
+  ui.items.forEach((it, i) => {
+    const y = g.top + i * (g.h + 6);
+    const fill = it.action === OPEN || it.action === DRAW ? S.ROW : asks(it) ? S.ASK : S.TRY;
+    roundRect(sc, 24, y, 752, g.h, 12, fill);
+    let textX = 40;
+    if (young) {
+      const r = Math.max(12, Math.min(34, g.h / 2 - 8));
+      sc.strokeStyle = S.FG;
+      sc.lineWidth = 2;
+      sc.beginPath();
+      sc.arc(24 + 14 + r, y + g.h / 2, r, 0, Math.PI * 2);
+      sc.stroke();
+      textX = 24 + 14 + r * 2 + 14;
+    }
+    const size = (ui.grade === 3 || g.h < 56) ? 16 : 24;
+    text(sc, labelOf(it), textX, y + g.h / 2, size, S.FG, "left");
+    if (it.action !== OPEN && it.action !== DRAW && ui.grade !== 0 && g.h >= 40) {
+      text(sc, asks(it) ? "Ask" : "Try", 760, y + g.h / 2, 16, S.FG, "right");
+    }
+  });
+  footer(sc);
+  gear(sc, 732, 8, 56, 44);
+}
+function paintDetail() {
+  const it = ui.open;
+  sc.fillStyle = S.BG;
+  sc.fillRect(0, 0, 800, 480);
+  roundRect(sc, 584, 8, 140, 44, 8, S.ROW);
+  text(sc, "Back", 654, 30, 16, S.FG, "center");
+  const band = asks(it) ? S.ASK : S.TRY;
+  const banner = ui.grade === 0 ? (asks(it) ? "Ask" : "Try") : (asks(it) ? "Ask my teacher" : "Try this");
+  roundRect(sc, 24, 64, 752, 64, 12, band);
+  text(sc, banner, 44, 96, ui.grade === 3 ? 16 : 26, S.FG, "left");
+  const candle = it.action === BREATHE && youngBreath();
+  const title = candle ? "Candle blowing" : it.label;
+  const help = candle
+    ? (ui.grade === 0
+      ? "Watch the flame.\nBlow it to the side.\nPress Begin."
+      : "Breathe in and the flame grows.\nBlow out and it leans away.\nCount 4, then hold.\nPress Begin.")
+    : it.help;
+  wrap(sc, title, 24, 148, 752, ui.grade === 3 || ui.grade === 0 ? 16 : 26, S.FG, 400);
+  wrap(sc, help, 24, 210, 752, 16, S.FG, 400);
+  if (it.action === BREATHE && ui.breath) {
+    paintBreathExercise();
+    footer(sc);
+    gear(sc, 732, 8, 56, 44);
+    return;
+  }
+  if (it.action === BREATHE) {
+    roundRect(sc, 24, 336, 752, 60, 8, S.TRY);
+    text(sc, "Begin", 400, 366, 18, S.FG, "center");
+  }
+  footer(sc);
+  gear(sc, 732, 8, 56, 44);
+}
+function paintBreathExercise() {
+  const into = Date.now() - ui.breathStart;
+  const phase = Math.floor(into / 4000) % 4;
+  const step = Math.floor(into / 1000) % 4;
+  const count = (phase === 1 || phase === 3) ? 4 - step : step + 1;
+  const along = into % 4000;
+  let size = 48;
+  if (phase === 0) size = 48 + along * 140 / 4000;
+  else if (phase === 1) size = 188;
+  else if (phase === 2) size = 188 - along * 140 / 4000;
+  sc.fillStyle = S.BG;
+  sc.fillRect(80, 140, 640, 260);
+  if (ui.calm) {
+    const words = youngBreath()
+      ? (ui.grade === 0 ? ["In", "Hold", "Blow", "Hold"] : ["Breathe in", "Hold", "Blow out", "Hold"])
+      : ["Breathe in", "Hold", "Breathe out", "Hold"];
+    text(sc, words[phase], 400, 190, 18, S.FG, "center");
+    text(sc, String(count), 400, 260, 36, S.FG, "center");
+    return;
+  }
+  if (!youngBreath()) {
+    const left = 310, top = 200, side = 180, right = left + side, bottom = top + side;
+    const travel = Math.min(side, along * side / 4000);
+    let dotX = left, dotY = bottom;
+    if (phase === 0) dotY = bottom - travel;
+    else if (phase === 1) { dotX = left + travel; dotY = top; }
+    else if (phase === 2) { dotX = right; dotY = top + travel; }
+    else { dotX = right - travel; dotY = bottom; }
+    sc.strokeStyle = "#4a69a0";
+    sc.lineWidth = 3;
+    sc.strokeRect(left, top, side, side);
+    sc.strokeStyle = S.TRY;
+    sc.beginPath();
+    if (phase > 0) { sc.moveTo(left, bottom); sc.lineTo(left, top); }
+    if (phase > 1) { sc.moveTo(left, top); sc.lineTo(right, top); }
+    if (phase > 2) { sc.moveTo(right, top); sc.lineTo(right, bottom); }
+    if (phase === 0) { sc.moveTo(left, bottom); sc.lineTo(dotX, dotY); }
+    else if (phase === 1) { sc.moveTo(left, top); sc.lineTo(dotX, dotY); }
+    else if (phase === 2) { sc.moveTo(right, top); sc.lineTo(dotX, dotY); }
+    else { sc.moveTo(right, bottom); sc.lineTo(dotX, dotY); }
+    sc.stroke();
+    sc.fillStyle = S.FG;
+    sc.beginPath();
+    sc.arc(dotX, dotY, 9, 0, Math.PI * 2);
+    sc.fill();
+    text(sc, String(count), 180, 290, 28, S.FG, "center");
+    text(sc, ["Breathe in", "Hold", "Breathe out", "Hold"][phase], 400, 160, 16, S.FG, "center");
+    return;
+  }
+  const words = ui.grade === 0 ? ["In", "Hold", "Blow", "Hold"] : ["Breathe in", "Hold", "Blow out", "Hold"];
+  text(sc, words[phase], 400, 162, ui.grade === 0 ? 26 : 16, S.FG, "center");
+  text(sc, String(count), 230, 300, 32, S.FG, "center");
+  roundRect(sc, 388, 292, 24, 96, 6, "#ffe38a");
+  sc.fillStyle = "#fff";
+  sc.fillRect(394, 300, 4, 72);
+  sc.fillStyle = S.FG;
+  sc.fillRect(398, 280, 4, 14);
+  const flameH = 22 + (size - 48) * 70 / 140;
+  const lean = phase === 2 ? along * 64 / 4000 : ((Math.floor(into / 140) % 5) - 2);
+  const baseY = 286;
+  sc.fillStyle = "#ff9a1f";
+  sc.beginPath();
+  sc.moveTo(382, baseY);
+  sc.lineTo(418, baseY);
+  sc.lineTo(400 + lean, baseY - flameH);
+  sc.fill();
+  sc.fillStyle = "#ffe14a";
+  sc.beginPath();
+  sc.moveTo(392, baseY);
+  sc.lineTo(408, baseY);
+  sc.lineTo(400 + lean, baseY - flameH * 2 / 3);
+  sc.fill();
+  if (phase === 2) {
+    sc.strokeStyle = S.FG;
+    sc.lineWidth = 2;
+    sc.beginPath();
+    sc.moveTo(280, baseY - 16); sc.lineTo(360, baseY - 28);
+    sc.moveTo(270, baseY + 2); sc.lineTo(368, baseY - 6);
+    sc.moveTo(286, baseY + 20); sc.lineTo(358, baseY + 6);
+    sc.stroke();
+  }
+}
+function openSettingsGate() {
+  ui.returnScreen = ui.screen === "spass" ? (ui.returnScreen || "thermo") : ui.screen;
+  ui.pinEntry = "";
+  ui.passStep = ui.settingsPass ? "enter" : "choose";
+  ui.screen = "spass";
+}
+function paintToolsPick() {
+  sc.fillStyle = S.BG;
+  sc.fillRect(0, 0, 800, 480);
+  text(sc, "Tools for this student", 24, 30, 26, S.FG, "left");
+  roundRect(sc, 648, 8, 140, 44, 8, S.ROW);
+  text(sc, "Back", 718, 30, 16, S.FG, "center");
+  TOOLS.forEach((tool, i) => {
+    const y = 80 + i * 70;
+    roundRect(sc, 24, y, 752, 58, 12, S.ROW);
+    text(sc, tool.name, 44, y + 29, 22, S.FG, "left");
+    const on = ui.tools[tool.key];
+    roundRect(sc, 620, y + 10, 140, 38, 8, on ? S.TRY : S.FOOT);
+    text(sc, on ? "On" : "Off", 690, y + 29, 16, S.FG, "center");
+    if (tool.key === "first" || tool.key === "sched") {
+      roundRect(sc, 470, y + 10, 136, 38, 8, S.BG);
+      text(sc, "Words", 538, y + 29, 16, S.FG, "center");
+    }
+  });
+  roundRect(sc, 24, 376, 752, 40, 10, S.ROW);
+  text(sc, "Accommodations", 44, 396, 18, S.FG, "left");
+  roundRect(sc, 24, 424, 360, 44, 10, S.ROW);
+  text(sc, "Strategy order", 40, 446, 16, S.FG, "left");
+  roundRect(sc, 400, 424, 376, 44, 10, S.ROW);
+  text(sc, "Calm screen", 416, 446, 16, S.FG, "left");
+  roundRect(sc, 620, 432, 140, 28, 8, ui.calm ? S.TRY : S.FOOT);
+  text(sc, ui.calm ? "On" : "Off", 690, 446, 14, ui.calm ? "#000" : S.FG, "center");
+}
+function paintOrder() {
+  sc.fillStyle = S.BG;
+  sc.fillRect(0, 0, 800, 480);
+  text(sc, "Strategy order", 24, 30, 22, S.FG, "left");
+  roundRect(sc, 648, 8, 140, 44, 8, S.ROW);
+  text(sc, "Back", 718, 30, 16, S.FG, "center");
+  ui.order.forEach((index, i) => {
+    const y = 80 + i * 70;
+    roundRect(sc, 24, y, 752, 58, 12, S.ROW);
+    text(sc, TOOLS[index].name, 44, y + 29, 22, S.FG, "left");
+    if (i > 0) {
+      roundRect(sc, 620, y + 10, 140, 38, 8, S.TRY);
+      text(sc, "Up", 690, y + 29, 16, "#000", "center");
+    }
+  });
+}
+function paintAccPick() {
+  sc.fillStyle = S.BG;
+  sc.fillRect(0, 0, 800, 480);
+  text(sc, "Accommodations", 24, 30, 18, S.FG, "left");
+  roundRect(sc, 648, 8, 140, 44, 8, S.ROW);
+  text(sc, "Back", 718, 30, 16, S.FG, "center");
+  ACC.forEach((name, i) => {
+    const y = 56 + i * 40;
+    roundRect(sc, 24, y, 752, 36, 8, S.ROW);
+    text(sc, name, 44, y + 18, 16, S.FG, "left");
+    const on = ui.acc[i];
+    roundRect(sc, 620, y + 4, 140, 28, 6, on ? S.TRY : S.FOOT);
+    text(sc, on ? "On" : "Off", 690, y + 18, 14, on ? "#000" : S.FG, "center");
+  });
+}
+const ACTIVITIES = [
+  "Reading", "Math", "Writing", "Science", "Recess",
+  "Lunch", "Snack", "Art", "Music", "PE",
+  "Centers", "Carpet", "Clean up", "Line up", "Choice",
+  "Work", "Break", "Story", "Help"
+];
+function paintActivityGrid(current) {
+  roundRect(sc, 16, 218, 768, 250, 16, S.ROW);
+  const listed = ACTIVITIES.indexOf(current) >= 0;
+  ACTIVITIES.forEach((name, i) => {
+    const x = 34 + (i % 5) * 148;
+    const y = 230 + Math.floor(i / 5) * 58;
+    const on = current === name;
+    roundRect(sc, x, y, 140, 50, 8, on ? S.TRY : S.BG);
+    text(sc, name, x + 70, y + 25, 16, on ? "#000" : S.FG, "center");
+  });
+  const cx = 34 + 4 * 148;
+  const cy = 230 + 3 * 58;
+  roundRect(sc, cx, cy, 140, 50, 8, listed ? S.BG : S.TRY);
+  text(sc, "Custom", cx + 70, cy + 25, 16, listed ? S.FG : "#000", "center");
+}
+function activityAt(x, y) {
+  for (let i = 0; i < ACTIVITIES.length + 1; i++) {
+    const left = 34 + (i % 5) * 148;
+    const top = 230 + Math.floor(i / 5) * 58;
+    if (hit(x, y, left, top, 140, 50)) return i;
+  }
+  return -1;
+}
+function schedX(i) { return 50 + i * 184; }
+function paintSchedArrow(blockX, y, h) {
+  const x = blockX + 154;
+  const mid = y + h / 2;
+  sc.fillStyle = S.FG;
+  sc.beginPath();
+  sc.moveTo(x, mid - 14);
+  sc.lineTo(x, mid + 14);
+  sc.lineTo(x + 24, mid);
+  sc.fill();
+}
+function paintFirstPick() {
+  sc.fillStyle = S.BG;
+  sc.fillRect(0, 0, 800, 480);
+  text(sc, "First, then", 24, 30, 16, S.FG, "left");
+  roundRect(sc, 648, 8, 140, 44, 8, S.ROW);
+  text(sc, "Back", 718, 30, 16, S.FG, "center");
+  const side = ui.firstSide ? 1 : 0;
+  [[16, "First", ui.first, side === 0], [408, "Then", ui.then, side === 1]].forEach(([x, label, word, on]) => {
+    roundRect(sc, x, 58, 376, 148, 16, on ? S.TRY : S.ROW);
+    text(sc, label, x + 188, 94, 16, on ? "#000" : S.FG, "center");
+    text(sc, word, x + 188, 150, 28, on ? "#000" : S.FG, "center");
+  });
+  paintActivityGrid(side === 0 ? ui.first : ui.then);
+}
+function paintSchedPick() {
+  sc.fillStyle = S.BG;
+  sc.fillRect(0, 0, 800, 480);
+  text(sc, "Schedule", 24, 30, 16, S.FG, "left");
+  roundRect(sc, 648, 8, 140, 44, 8, S.ROW);
+  text(sc, "Back", 718, 30, 16, S.FG, "center");
+  const edit = ui.schedEdit || 0;
+  ui.steps.forEach((step, i) => {
+    const x = schedX(i);
+    roundRect(sc, x, 64, 148, 142, 14, i === edit ? S.TRY : S.ROW);
+    text(sc, step, x + 74, 135, 16, i === edit ? "#000" : S.FG, "center");
+    if (i < 3) paintSchedArrow(x, 64, 142);
+  });
+  paintActivityGrid(ui.steps[edit]);
+}
+function paintBreathPage() {
+  sc.fillStyle = S.BG;
+  sc.fillRect(0, 0, 800, 480);
+  roundRect(sc, 584, 8, 140, 44, 8, S.ROW);
+  text(sc, "Back", 654, 30, 16, S.FG, "center");
+  if (ui.breath) {
+    paintBreathExercise();
+    footer(sc);
+    gear(sc, 732, 8, 56, 44);
+    return;
+  }
+  if (ui.breathOffer) {
+    text(sc, "Three breaths.", 400, 160, 28, S.FG, "center");
+    text(sc, "Do it again?", 400, 210, 16, S.FG, "center");
+    roundRect(sc, 24, 336, 752, 60, 8, S.TRY);
+    text(sc, "Again", 400, 366, 22, S.FG, "center");
+  } else {
+    text(sc, youngBreath() ? "Candle blowing" : "Box breathing", 400, 160, 28, S.FG, "center");
+    text(sc, youngBreath() ? "Press Begin. The flame moves on its own." : "Press Begin. Follow the dot for three boxes.", 400, 210, 16, S.FG, "center");
+    roundRect(sc, 24, 336, 752, 60, 8, S.TRY);
+    text(sc, "Begin", 400, 366, 22, S.FG, "center");
+  }
+  footer(sc);
+  gear(sc, 732, 8, 56, 44);
+}
+function paintSettings() {
+  sc.fillStyle = S.BG;
+  sc.fillRect(0, 0, 800, 480);
+  text(sc, "Settings", 24, 30, 26, S.FG, "left");
+  roundRect(sc, 220, 8, 150, 44, 8, S.ROW);
+  text(sc, "Student tools", 295, 30, 14, S.FG, "center");
+  roundRect(sc, 380, 8, 100, 44, 8, ui.dark ? S.FOOT : S.TRY);
+  text(sc, "Light", 430, 30, 14, ui.dark ? S.FG : "#111", "center");
+  roundRect(sc, 488, 8, 100, 44, 8, ui.dark ? S.TRY : S.FOOT);
+  text(sc, "Dark", 538, 30, 14, ui.dark ? "#e6e6e6" : S.FG, "center");
+  roundRect(sc, 648, 8, 140, 44, 8, S.TRY);
+  text(sc, "Done", 718, 30, 16, S.FG, "center");
+  roundRect(sc, 24, 60, 752, 56, 12, S.ROW);
+  text(sc, "Student", 44, 78, 14, S.FG, "left");
+  text(sc, ui.name, 150, 78, 18, S.FG, "left");
+  text(sc, "Teacher", 44, 100, 14, S.FG, "left");
+  text(sc, ui.teacherName, 150, 100, 18, S.FG, "left");
+  roundRect(sc, 636, 68, 128, 40, 8, S.TRY);
+  text(sc, "Change", 700, 88, 16, S.FG, "center");
+  text(sc, "Brightness  " + ui.bright + "%", 24, 140, 16, S.FG, "left", "top");
+  roundRect(sc, 24, 164, 56, 40, 8, S.ROW);
+  roundRect(sc, 720, 164, 56, 40, 8, S.ROW);
+  text(sc, "-", 52, 184, 20, S.FG, "center");
+  text(sc, "+", 748, 184, 20, S.FG, "center");
+  text(sc, "Age group", 24, 220, 16, S.FG, "left", "top");
+  grades.forEach((g, i) => {
+    const y = 236 + i * 46;
+    const fill = i === ui.grade ? S.TRY : S.ROW;
+    roundRect(sc, 24, y, 752, 42, 12, fill);
+    text(sc, g[0] + "   " + g[1], 40, y + 21, 16, S.FG, "left");
+    if (i === ui.grade) text(sc, "In use", 760, y + 21, 16, S.FG, "right");
+  });
+  roundRect(sc, 24, 426, 368, 46, 12, S.ROW);
+  roundRect(sc, 408, 426, 368, 46, 12, S.ROW);
+  text(sc, "Bridger", 40, 449, 16, S.FG, "left");
+  text(sc, "Draw or write", 424, 449, 16, S.FG, "left");
+  roundRect(sc, 250, 434, 120, 30, 8, ui.bridger ? S.TRY : S.FOOT);
+  roundRect(sc, 640, 434, 120, 30, 8, ui.express ? S.TRY : S.FOOT);
+  text(sc, ui.bridger ? "On" : "Off", 310, 449, 14, ui.bridger ? "#000" : S.FG, "center");
+  text(sc, ui.express ? "On" : "Off", 700, 449, 14, ui.express ? "#000" : S.FG, "center");
+}
+function paintKeys() {
+  sc.fillStyle = S.BG;
+  sc.fillRect(0, 0, 800, 480);
+  const title = ui.typeMode === "name" ? "Student name" : (ui.open ? ui.open.label : "Write a line");
+  const action = ui.typeMode === "message" ? "Send" : "Save";
+  text(sc, title, 24, 30, 16, S.FG, "left");
+  paintExpressClock();
+  roundRect(sc, 500, 8, 140, 44, 8, S.ROW);
+  text(sc, "Back", 570, 30, 16, S.FG, "center");
+  roundRect(sc, 648, 8, 140, 44, 8, ui.typed ? S.TRY : S.ROW);
+  text(sc, action, 718, 30, 16, S.FG, "center");
+  roundRect(sc, 24, 68, 752, 64, 12, S.ROW);
+  text(sc, ui.typed || "Tap letters below", 44, 100, ui.typed ? 24 : 16, S.FG, "left");
+  const rows = ["QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"];
+  rows.forEach((row, r) => {
+    const keyW = 64, gap = 8;
+    const y = 148 + r * 70;
+    const x0 = (800 - (row.length * keyW + (row.length - 1) * gap)) / 2;
+    for (let i = 0; i < row.length; i++) {
+      const x = x0 + i * (keyW + gap);
+      roundRect(sc, x, y, keyW, 62, 8, S.ROW);
+      text(sc, row[i], x + keyW / 2, y + 31, 18, S.FG, "center");
+    }
+  });
+  roundRect(sc, 220, 358, 360, 50, 8, S.ROW);
+  text(sc, "Space", 400, 383, 16, S.FG, "center");
+  roundRect(sc, 592, 358, 160, 50, 8, S.FOOT);
+  text(sc, "Del", 672, 383, 16, S.FG, "center");
+}
+function paintWrite() {
+  sc.fillStyle = "#fff";
+  sc.fillRect(0, 0, 800, 480);
+  roundRect(sc, 500, 8, 140, 44, 8, S.ROW);
+  text(sc, "Back", 570, 30, 16, S.FG, "center");
+  roundRect(sc, 648, 8, 140, 44, 8, S.TRY);
+  text(sc, "Done", 718, 30, 16, "#000", "center");
+  text(sc, "Notebook", 24, 32, 16, "#111", "left");
+  paintExpressClock();
+  ui.write.forEach((line, i) => {
+    const y = 80 + i * 78;
+    roundRect(sc, 24, y, 752, 68, 12, "#fbf6ec");
+    text(sc, String(i + 1), 40, y + 34, 24, "#111", "left");
+    text(sc, line || "Tap to write", 80, y + 34, 16, "#111", "left");
+  });
+  footer(sc);
+}
+function paintDrawMenu() {
+  sc.fillStyle = S.BG;
+  sc.fillRect(0, 0, 800, 480);
+  roundRect(sc, 8, 8, 82, 44, 8, S.ROW);
+  text(sc, "Back", 49, 30, 16, S.FG, "center");
+  text(sc, "Graph board, White Board, or Chalk board?", 400, 30, 16, S.FG, "center");
+  paintExpressClock();
+  const labels = ["Graph Board - Digital Pencil", "White Board - Digital Marker", "Chalk Board - Digital Chalk"];
+  const fills = ["#fff", "#fff", rgb(0x13A4)];
+  const inks = [S.FG, S.FG, "#fff"];
+  [82, 190, 298].forEach((y, i) => {
+    roundRect(sc, 24, y, 752, 96, 12, fills[i]);
+    text(sc, labels[i], 400, y + 48, 22, inks[i], "center");
+  });
+}
+const CHALK = [
+  { name: "Orange", fill: "#fd6a00", ink: "#111" },
+  { name: "White", fill: "#fff", ink: "#111" },
+  { name: "Blue", fill: "#00f", ink: "#fff" },
+  { name: "Green", fill: "#0f0", ink: "#111" },
+  { name: "Yellow", fill: "#ff0", ink: "#111" },
+  { name: "Pink", fill: "#ff69b5", ink: "#111" },
+  { name: "Red", fill: "#f00", ink: "#fff" },
+  { name: "Purple", fill: "#9c00b5", ink: "#fff" }
+];
+const CHALK_X = [12, 110, 208, 306, 404, 502, 600, 698];
+function penColor() {
+  if (ui.board === 0) return "#fff";
+  if (ui.board === 1) return "#000";
+  return CHALK[ui.chalk].fill;
+}
+function paintDraw() {
+  const chalk = ui.board === 2;
+  const surface = chalk ? rgb(0x13A4) : "#000";
+  sc.fillStyle = surface;
+  sc.fillRect(0, 0, 800, 480);
+  sc.fillStyle = chalk ? rgb(0x13A4) : S.BG;
+  sc.fillRect(0, 0, 800, 108);
+  const button = chalk ? "#fff" : S.ROW;
+  const ink = chalk ? "#111" : S.FG;
+  [["Back", 8, 82], ["Save", 98, 80], ["Reset", 192, 104], ["New", 310, 96], ["Read", 410, 88]].forEach(([name, x, w]) => {
+    roundRect(sc, x, 8, w, 44, 8, button);
+    text(sc, name, x + w / 2, 30, 16, ink, "center");
+  });
+  if (!chalk) text(sc, ["Graph Board - Pencil", "White Board - Marker"][ui.board], 555, 30, 16, S.FG, "center");
+  if (chalk) {
+    CHALK.forEach((c, i) => {
+      const x = CHALK_X[i];
+      roundRect(sc, x, 58, 90, 36, 8, c.fill);
+      text(sc, c.name, x + 45, 76, 14, c.ink, "center");
+      if (i === ui.chalk) {
+        sc.strokeStyle = "#fff";
+        sc.lineWidth = 2;
+        sc.strokeRect(x + 2, 60, 86, 32);
+      }
+    });
+  }
+  if (ui.board === 0) {
+    sc.strokeStyle = "#212421";
+    sc.lineWidth = 1;
+    for (let x = 0; x < 800; x += 20) { sc.beginPath(); sc.moveTo(x, 108); sc.lineTo(x, 419); sc.stroke(); }
+    for (let y = 108; y < 420; y += 20) { sc.beginPath(); sc.moveTo(0, y); sc.lineTo(799, y); sc.stroke(); }
+  }
+  sc.lineCap = "round";
+  ui.strokes.forEach((s) => {
+    sc.strokeStyle = s[4] || penColor();
+    sc.lineWidth = ui.board === 0 ? 2 : ui.board === 1 ? 7 : 5;
+    sc.beginPath();
+    sc.moveTo(s[0], s[1]);
+    sc.lineTo(s[2], s[3]);
+    sc.stroke();
+  });
+  sc.fillStyle = S.FOOT;
+  sc.fillRect(0, 420, 800, 60);
+  text(sc, "Draw on the board", 18, 450, 16, S.FG, "left");
+  paintExpressClock();
+}
+
+function paintPad(ctx, width, title, note, entry, bg, fg, key) {
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, width, width === 800 ? 480 : 320);
+  text(ctx, title, 16, width === 800 ? 36 : 20, width === 800 ? 28 : 22, fg, "left");
+  text(ctx, note, 16, width === 800 ? 78 : 52, 16, fg, "left");
+  const dots = [0, 1, 2, 3].map((i) => (entry[i] ? "*" : "_")).join(" ");
+  text(ctx, dots, 16, width === 800 ? 120 : 78, 28, fg, "left");
+  const wide = width === 800;
+  const padW = wide ? 150 : 76;
+  const padH = wide ? 64 : 50;
+  const gap = wide ? 12 : 4;
+  const left = wide ? Math.floor((800 - (3 * padW + 2 * gap)) / 2) : 2;
+  const top = wide ? 168 : 96;
+  PAD_KEYS.forEach((label, i) => {
+    const x = left + (i % 3) * (padW + gap);
+    const y = top + Math.floor(i / 3) * (padH + gap);
+    roundRect(ctx, x, y, padW, padH, 10, key);
+    text(ctx, label, x + padW / 2, y + padH / 2, wide ? 24 : 16, fg, "center");
+  });
+}
+function padKey(x, y, wide) {
+  const padW = wide ? 150 : 76;
+  const padH = wide ? 64 : 50;
+  const gap = wide ? 12 : 4;
+  const left = wide ? Math.floor((800 - (3 * padW + 2 * gap)) / 2) : 2;
+  const top = wide ? 168 : 96;
+  for (let i = 0; i < PAD_KEYS.length; i++) {
+    const keyX = left + (i % 3) * (padW + gap);
+    const keyY = top + Math.floor(i / 3) * (padH + gap);
+    if (hit(x, y, keyX, keyY, padW, padH)) return PAD_KEYS[i];
+  }
+  return "";
+}
+function typePin(current, key) {
+  if (key === "C") return "";
+  if (key === "<") return current.slice(0, -1);
+  if (current.length >= 4) return current;
+  return current + key;
+}
+
+const ZONES = [
+  { name: "Blue Zone", color: "#3aa0ff", tell: false, ink: "#fff" },
+  { name: "Green Zone", color: "#00c800", tell: false, ink: "#000" },
+  { name: "Yellow Zone", color: "#ffe14a", tell: true, ink: "#000" },
+  { name: "Orange Zone", color: "#ff7a00", tell: true, ink: "#000" },
+  { name: "Red Zone", color: "#e10600", tell: true, ink: "#fff" }
+];
+const TOOLS = [
+  { key: "ground", name: "See, hear, feel", screen: "ground" },
+  { key: "first", name: "First, then", screen: "first" },
+  { key: "sched", name: "Schedule", screen: "sched" },
+  { key: "breath", name: "Breathe", screen: "breath" }
+];
+const ACC = [
+  "Movement break", "Quiet corner", "Headphones", "Extra time", "Fidget",
+  "Sit close", "Water break", "Chunk work", "Helper", "Stand up"
+];
+function offeredTools() {
+  return ui.order.map((index) => TOOLS[index]).filter((tool) => tool && ui.tools[tool.key]);
+}
+function tone(color) {
+  return ui.calm ? "#d8d8d8" : color;
+}
+function approvedAcc() {
+  return ACC.filter((_, i) => ui.acc && ui.acc[i]);
+}
+function zoneFromY(y) {
+  const top = 108, bottom = 300, band = (bottom - top) / ZONES.length;
+  if (y >= bottom) return 0;
+  if (y <= top) return ZONES.length - 1;
+  return Math.max(0, Math.min(ZONES.length - 1, Math.floor((bottom - y) / band)));
+}
+function paintThermo() {
+  sc.fillStyle = S.BG;
+  sc.fillRect(0, 0, 800, 480);
+  text(sc, "How big are your feelings?", 24, 28, 26, S.FG, "left");
+  text(sc, "How much energy are you using?", 24, 62, 16, S.FG, "left");
+  const tubeX = 150, tubeW = 52, top = 108, bottom = 300, band = (bottom - top) / ZONES.length;
+  const cx = tubeX + tubeW / 2;
+  sc.fillStyle = ZONES[4].color;
+  sc.beginPath();
+  sc.roundRect(tubeX, top, tubeW, bottom - top, tubeW / 2);
+  sc.fill();
+  for (let i = 0; i < 4; i++) {
+    const y = bottom - (i + 1) * band;
+    const h = i === 0 ? bottom - y : band;
+    sc.fillStyle = ZONES[i].color;
+    sc.fillRect(tubeX, y, tubeW, h);
+  }
+  sc.strokeStyle = "#fff";
+  sc.lineWidth = 2;
+  sc.beginPath();
+  sc.roundRect(tubeX - 3, top - 3, tubeW + 6, bottom - top + 6, tubeW / 2 + 3);
+  sc.stroke();
+  const bulbY = bottom + 46 - 16;
+  sc.fillStyle = ZONES[0].color;
+  sc.beginPath();
+  sc.arc(cx, bulbY, 46, 0, Math.PI * 2);
+  sc.fill();
+  sc.fillRect(tubeX, bottom - 8, tubeW, 16);
+  sc.stroke();
+  for (let y = top + 14; y < bottom - 4; y += 8) {
+    const len = (Math.round((y - top) / 8) % 3 === 0) ? 16 : 8;
+    sc.beginPath();
+    sc.moveTo(tubeX + tubeW + 8, y);
+    sc.lineTo(tubeX + tubeW + 8 + len, y);
+    sc.stroke();
+  }
+  ZONES.forEach((zone, i) => {
+    const mid = bottom - (i + 0.5) * band;
+    const selected = i === ui.zone;
+    sc.strokeStyle = "#fff";
+    sc.beginPath();
+    sc.moveTo(tubeX + tubeW + 4, mid);
+    sc.lineTo(328, mid);
+    sc.stroke();
+    roundRect(sc, 328, mid - 17, 196, 34, 12, selected ? zone.color : "#fff");
+    sc.strokeStyle = selected ? "#fff" : pageBg();
+    sc.lineWidth = 2;
+    sc.beginPath();
+    sc.roundRect(328, mid - 17, 196, 34, 12);
+    sc.stroke();
+    text(sc, zone.name, 426, mid, 16, selected ? zone.ink : "#000", "center");
+  });
+  roundRect(sc, 500, 360, 270, 52, 12, ZONES[ui.zone].color);
+  text(sc, "This is me", 635, 386, 24, ZONES[ui.zone].ink, "center");
+  footer(sc);
+  gear(sc, 732, 8, 56, 44);
+}
+const HUB_Y1 = 128, HUB_Y2 = 260, HUB_H = 120, HUB_W = 372;
+function hubCard(x, y, w, h, fill, title, about) {
+  roundRect(sc, x, y, w, h, 22, fill);
+  text(sc, title, x + w / 2, y + 72, 26, ui.dark ? "#e6e6e6" : "#111", "center");
+  text(sc, about, x + w / 2, y + 98, 14, ui.dark ? "#b0b8c0" : "#666", "center");
+}
+function paintZone() {
+  sc.fillStyle = pageBg();
+  sc.fillRect(0, 0, 800, 480);
+  drawLogo(sc, 28);
+  text(sc, "Hello, " + ui.name + "!", 24, 64, 16, ui.dark ? "#9aa3ad" : "#666", "left");
+  text(sc, "What would help you right now?", 24, 104, 26, pageInk(), "left");
+  hubCard(20, HUB_Y1, HUB_W, HUB_H, cardFill("#e7f4ee"), "Feel Better", "Breathing and calming tools");
+  if (!ui.calm) text(sc, "♡", 206, HUB_Y1 + 32, 22, "#2f7d55", "center");
+  hubCard(408, HUB_Y1, HUB_W, HUB_H, cardFill("#fbf6ec"), "Ask for Help", "Tell your teacher what you need");
+  if (!ui.calm) text(sc, "✋", 594, HUB_Y1 + 32, 22, "#111", "center");
+  if (ui.express) {
+    hubCard(20, HUB_Y2, HUB_W, HUB_H, cardFill("#eee9f6"), "Draw or Write", "Express yourself another way");
+    if (!ui.calm) text(sc, "✎", 206, HUB_Y2 + 32, 22, "#111", "center");
+    hubCard(408, HUB_Y2, HUB_W, HUB_H, cardFill("#e7f3fb"), "Tools", "Race, schedule, and first then");
+    if (!ui.calm) drawToolbox(408 + HUB_W / 2, HUB_Y2 + 28);
+  } else {
+    hubCard(20, HUB_Y2, 760, HUB_H, cardFill("#e7f3fb"), "Tools", "Race, schedule, and first then");
+    if (!ui.calm) drawToolbox(400, HUB_Y2 + 28);
+  }
+  roundRect(sc, 584, 8, 140, 44, 8, S.ROW);
+  text(sc, "Back", 654, 30, 16, S.FG, "center");
+  footer(sc);
+  gear(sc, 732, 8, 56, 44);
+}
+function paintSoothe() {
+  sc.fillStyle = pageBg();
+  sc.fillRect(0, 0, 800, 480);
+  text(sc, "Feel Better", 24, 70, 28, pageInk(), "left");
+  text(sc, "Breathing and calming tools", 24, 102, 16, ui.dark ? "#9aa3ad" : "#666", "left");
+  const offered = offeredTools().filter((tool) => tool.key === "ground" || tool.key === "breath");
+  offered.forEach((tool, i) => {
+    const y = 124 + i * 50;
+    roundRect(sc, 24, y, 752, 44, 16, cardFill("#e7f4ee"));
+    text(sc, tool.name, 44, y + 22, 22, ui.dark ? "#e6e6e6" : "#111", "left");
+  });
+  roundRect(sc, 584, 8, 140, 44, 8, S.ROW);
+  text(sc, "Back", 654, 30, 16, S.FG, "center");
+  footer(sc);
+  gear(sc, 732, 8, 56, 44);
+}
+function paintPlan() {
+  sc.fillStyle = pageBg();
+  sc.fillRect(0, 0, 800, 480);
+  text(sc, "Tools", 24, 70, 28, pageInk(), "left");
+  text(sc, "Race, schedule, and first then", 24, 102, 16, ui.dark ? "#9aa3ad" : "#666", "left");
+  const rows = offeredTools().filter((tool) => tool.key === "first" || tool.key === "sched");
+  rows.forEach((tool, i) => {
+    const y = 124 + i * 50;
+    roundRect(sc, 24, y, 752, 44, 16, cardFill("#e7f3fb"));
+    text(sc, tool.name, 44, y + 22, 22, ui.dark ? "#e6e6e6" : "#111", "left");
+  });
+  const raceY = 124 + rows.length * 50;
+  roundRect(sc, 24, raceY, 752, 44, 16, cardFill("#e7f3fb"));
+  text(sc, "Race Bridger", 44, raceY + 22, 22, ui.dark ? "#e6e6e6" : "#111", "left");
+  roundRect(sc, 584, 8, 140, 44, 8, S.ROW);
+  text(sc, "Back", 654, 30, 16, S.FG, "center");
+  footer(sc);
+  gear(sc, 732, 8, 56, 44);
+}
+const RACE_MS = 5 * 60 * 1000;
+function expressCounts() {
+  return ui.screen === "express" || ui.screen === "write" || ui.screen === "draw" || ui.screen === "drawmenu" || (ui.screen === "keys" && ui.typeMode === "write");
+}
+function startExpress() {
+  if (ui.expressOn) return;
+  ui.expressOn = true;
+  ui.expressStart = Date.now();
+  ui.expressPaused = false;
+}
+function stopExpress() {
+  ui.expressOn = false;
+  ui.expressPaused = false;
+}
+function expressClock() {
+  let gone = 0;
+  if (ui.expressOn && !ui.expressPaused) gone = Date.now() - ui.expressStart;
+  const left = Math.max(0, RACE_MS - gone);
+  const mins = Math.floor(left / 60000);
+  const secs = Math.floor((left / 1000) % 60);
+  return mins + ":" + String(secs).padStart(2, "0");
+}
+function paintExpressClock() {
+  if (!ui.expressOn) return;
+  const clock = expressClock();
+  if (ui.screen === "draw" && ui.board === 2) {
+    roundRect(sc, 624, 8, 164, 44, 10, "#fff");
+    text(sc, clock, 706, 30, 22, "#111", "center");
+  } else if (ui.screen === "draw") {
+    text(sc, clock, 784, 450, 16, S.FG, "right");
+  } else if (ui.screen === "drawmenu") {
+    text(sc, clock, 784, 30, 16, S.FG, "right");
+  } else if (ui.screen === "keys" || ui.screen === "write") {
+    text(sc, clock, 200, ui.screen === "write" ? 32 : 30, 16, "#111", "left");
+  } else {
+    text(sc, clock, 430, 70, 28, "#111", "left");
+  }
+}
+function raceGone() {
+  if (ui.raceDone) return RACE_MS;
+  if (!ui.race) return 0;
+  return Math.min(RACE_MS, Date.now() - ui.raceStart);
+}
+function raceLine() {
+  const gone = raceGone();
+  if (gone >= RACE_MS) return "I waited. You did fine.";
+  if (gone >= 4 * 60 * 1000) return "Almost at the pond.";
+  if (gone >= 150000) return "Halfway. I will wait.";
+  if (gone >= 60000) return "Still going. No rush.";
+  return ui.bridgerLine || "I'll walk. You can race me.";
+}
+function paintRace() {
+  sc.fillStyle = pageBg();
+  sc.fillRect(0, 0, 800, 480);
+  text(sc, "Race with Bridger", 24, 64, 28, pageInk(), "left");
+  text(sc, raceLine(), 24, 98, 16, ui.dark ? "#9aa3ad" : "#666", "left");
+  const left = RACE_MS - raceGone();
+  const mins = Math.floor(left / 60000);
+  const secs = Math.floor((left / 1000) % 60);
+  text(sc, mins + ":" + String(secs).padStart(2, "0"), 400, 150, 36, pageInk(), "center");
+  roundRect(sc, 48, 236, 704, 16, 8, ui.dark ? "#3a3a3a" : "#d8d8d8");
+  sc.fillStyle = "#3aa0ff";
+  sc.beginPath();
+  sc.arc(736, 244, 20, 0, Math.PI * 2);
+  sc.fill();
+  const bx = 56 + Math.round(raceGone() * 600 / RACE_MS);
+  const fur = "#c47a45";
+  sc.fillStyle = fur;
+  sc.beginPath();
+  sc.arc(bx + 8, 212, 6, 0, Math.PI * 2);
+  sc.arc(bx + 24, 212, 6, 0, Math.PI * 2);
+  sc.fill();
+  roundRect(sc, bx, 214, 32, 24, 8, fur);
+  if (!ui.race) {
+    roundRect(sc, 24, 320, 752, 56, 12, cardFill("#e7f4ee"));
+    text(sc, ui.raceDone ? "Again" : "Start", 400, 348, 24, "#111", "center");
+  }
+  roundRect(sc, 584, 8, 140, 44, 8, S.ROW);
+  text(sc, "Back", 654, 30, 16, S.FG, "center");
+  footer(sc);
+  gear(sc, 732, 8, 56, 44);
+}
+function paintAsk() {
+  sc.fillStyle = pageBg();
+  sc.fillRect(0, 0, 800, 480);
+  text(sc, "Ask for Help", 24, 70, 28, pageInk(), "left");
+  text(sc, "Tell your teacher what you need", 24, 102, 16, ui.dark ? "#9aa3ad" : "#666", "left");
+  const aids = approvedAcc();
+  if (!aids.length) text(sc, "No accommodations are turned on.", 400, 240, 16, pageInk(), "center");
+  const gap = 4;
+  let h = aids.length ? Math.floor((392 - 128 - (aids.length - 1) * gap) / aids.length) : 48;
+  h = Math.max(28, Math.min(48, h));
+  aids.forEach((name, i) => {
+    const y = 128 + i * (h + gap);
+    roundRect(sc, 24, y, 752, h, 12, cardFill("#fbf6ec"));
+    text(sc, name, 44, y + h / 2, 16, ui.dark ? "#e6e6e6" : "#111", "left");
+  });
+  roundRect(sc, 584, 8, 140, 44, 8, S.ROW);
+  text(sc, "Back", 654, 30, 16, S.FG, "center");
+  footer(sc);
+  gear(sc, 732, 8, 56, 44);
+}
+function paintExpress() {
+  sc.fillStyle = "#fff";
+  sc.fillRect(0, 0, 800, 480);
+  text(sc, "Draw or Write", 24, 70, 28, "#111", "left");
+  text(sc, "Express yourself another way", 24, 102, 16, "#666", "left");
+  paintExpressClock();
+  roundRect(sc, 24, 150, 364, 220, 22, rgb(0x13A4));
+  text(sc, "Chalkboard", 206, 250, 26, "#fff", "center");
+  text(sc, "Draw with chalk", 206, 286, 16, "#fff", "center");
+  hubCard(412, 150, 364, 220, "#eee9f6", "Notebook", "Type a few lines");
+  roundRect(sc, 584, 8, 140, 44, 8, S.ROW);
+  text(sc, "Back", 654, 30, 16, S.FG, "center");
+  footer(sc);
+  gear(sc, 732, 8, 56, 44);
+}
+function paintFeed() {
+  sc.fillStyle = pageBg();
+  sc.fillRect(0, 0, 800, 480);
+  drawLogo(sc, 36);
+  text(sc, "Did that help?", 400, 96, 28, pageInk(), "center");
+  [["Yes", 24, "#e7f4ee", "✓"], ["Try again", 282, "#e7f3fb", "↻"], ["Not yet", 540, "#fbf6ec", "×"]].forEach(([label, x, fill, mark]) => {
+    roundRect(sc, x, 132, 236, 156, 22, cardFill(fill));
+    if (!ui.calm) text(sc, mark, x + 118, 188, 28, "#333", "center");
+    text(sc, label, x + 118, 244, 22, "#111", "center");
+  });
+  text(sc, teacherLabel() === "Teacher" ? "I need my teacher" : "I need " + teacherLabel(), 400, 340, 26, pageInk(), "center");
+  footer(sc);
+  gear(sc, 732, 8, 56, 44);
+}
+const SEE_LOOKS = ["green", "blue", "red", "yellow", "round", "pointy", "shiny", "soft", "big", "small"];
+function pickSeeLooks() {
+  const bag = SEE_LOOKS.slice();
+  const picks = [];
+  while (picks.length < 3) {
+    picks.push(bag.splice(Math.floor(Math.random() * bag.length), 1)[0]);
+  }
+  ui.seeLooks = picks;
+}
+function paintGround() {
+  const step = Math.max(0, Math.min(6, ui.ground || 0));
+  let count = "";
+  let line = "You found them";
+  let button = "I'm ready";
+  let progress = "";
+  if (step < 3) {
+    count = "3";
+    line = "Find something " + ((ui.seeLooks && ui.seeLooks[step]) || "green");
+    button = "I see it";
+    progress = (step + 1) + " of 3";
+  } else if (step < 5) {
+    count = "2";
+    line = "Find something to touch";
+    button = "I touch it";
+    progress = (step - 2) + " of 2";
+  } else if (step < 6) {
+    count = "1";
+    line = "Find a sound around you";
+    button = "I hear it";
+  }
+  sc.fillStyle = S.BG;
+  sc.fillRect(0, 0, 800, 480);
+  if (count) text(sc, count, 400, 118, 36, S.FG, "center");
+  text(sc, line, 400, 176, 26, S.FG, "center");
+  if (progress) text(sc, progress, 400, 222, 16, S.FG, "center");
+  roundRect(sc, 175, 268, 450, 72, 12, S.TRY);
+  text(sc, button, 400, 304, 24, S.FG, "center");
+  roundRect(sc, 584, 8, 140, 44, 8, S.ROW);
+  text(sc, "Back", 654, 30, 16, S.FG, "center");
+  footer(sc);
+  gear(sc, 732, 8, 56, 44);
+}
+function paintFirst() {
+  sc.fillStyle = S.BG;
+  sc.fillRect(0, 0, 800, 480);
+  roundRect(sc, 24, 72, 752, 120, 16, S.ROW);
+  roundRect(sc, 24, 204, 752, 120, 16, S.TRY);
+  text(sc, "First", 48, 100, 16, S.FG, "left");
+  text(sc, ui.first || "Work", 48, 136, 28, S.FG, "left");
+  text(sc, "Then", 48, 232, 16, "#000", "left");
+  text(sc, ui.then || "Break", 48, 268, 28, "#000", "left");
+  roundRect(sc, 24, 338, 752, 52, 12, "#e7f4ee");
+  text(sc, "I did it", 400, 364, 22, "#111", "center");
+  roundRect(sc, 584, 8, 140, 44, 8, S.ROW);
+  text(sc, "Back", 654, 30, 16, S.FG, "center");
+  footer(sc);
+  gear(sc, 732, 8, 56, 44);
+}
+function paintSched() {
+  const steps = ui.steps || ["Arrive", "Learn", "Break", "Pack up"];
+  const now = ui.step || 0;
+  sc.fillStyle = S.BG;
+  sc.fillRect(0, 0, 800, 480);
+  steps.forEach((step, i) => {
+    const x = schedX(i);
+    roundRect(sc, x, 128, 148, 128, 14, i === now ? S.TRY : S.ROW);
+    text(sc, step, x + 74, 192, 18, i === now ? "#000" : S.FG, "center");
+    if (i < steps.length - 1) paintSchedArrow(x, 128, 128);
+  });
+  roundRect(sc, 24, 292, 480, 72, 12, S.TRY);
+  roundRect(sc, 520, 292, 256, 72, 12, "#e7f4ee");
+  text(sc, "Next activity", 264, 328, 22, "#000", "center");
+  text(sc, "I did it", 648, 328, 22, "#111", "center");
+  roundRect(sc, 584, 8, 140, 44, 8, S.ROW);
+  text(sc, "Back", 654, 30, 16, S.FG, "center");
+  footer(sc);
+  gear(sc, 732, 8, 56, 44);
+}
+function paintStudent() {
+  applyLook();
+  if (ui.screen === "lock") {
+    paintPad(sc, 800, "Class PIN", "Preview PIN 2580", ui.pinEntry, S.BG, S.FG, S.ROW);
+    return;
+  }
+  if (ui.screen === "spass") {
+    const note = ui.settingsPass
+      ? "Enter the settings password"
+      : (ui.passStep === "again" ? "Enter that password again" : "Choose a password students do not know");
+    paintPad(sc, 800, "Settings", note, ui.pinEntry, S.BG, S.FG, S.ROW);
+    roundRect(sc, 584, 8, 140, 44, 8, S.ROW);
+    text(sc, "Back", 654, 30, 16, S.FG, "center");
+    return;
+  }
+  if (ui.screen === "stools") {
+    paintToolsPick();
+    return;
+  }
+  if (ui.screen === "firstpick") {
+    paintFirstPick();
+    return;
+  }
+  if (ui.screen === "schedpick") {
+    paintSchedPick();
+    return;
+  }
+  if (ui.screen === "accpick") {
+    paintAccPick();
+    return;
+  }
+  if (ui.screen === "order") {
+    paintOrder();
+    return;
+  }
+  if (ui.screen === "thermo") paintThermo();
+  else if (ui.screen === "zone") paintZone();
+  else if (ui.screen === "soothe") paintSoothe();
+  else if (ui.screen === "plan") paintPlan();
+  else if (ui.screen === "race") paintRace();
+  else if (ui.screen === "ask") paintAsk();
+  else if (ui.screen === "express") paintExpress();
+  else if (ui.screen === "feed") paintFeed();
+  else if (ui.screen === "ground") paintGround();
+  else if (ui.screen === "first") paintFirst();
+  else if (ui.screen === "sched") paintSched();
+  else if (ui.screen === "breath") paintBreathPage();
+  else if (ui.screen === "hello") paintHello();
+  else if (ui.screen === "menu") paintList();
+  else if (ui.screen === "detail") paintDetail();
+  else if (ui.screen === "settings") paintSettings();
+  else if (ui.screen === "keys") paintKeys();
+  else if (ui.screen === "write") paintWrite();
+  else if (ui.screen === "drawmenu") paintDrawMenu();
+  else if (ui.screen === "draw") paintDraw();
+}
+
+function teacherTone() {
+  if (!ui.teacherDark) return T;
+  return {
+    BG: "#1a2430", FG: "#e6e6e6", TRY: "#1f6b45",
+    ASK: "#a36a28", NO: "#8a4050", FOOT: "#3a4450"
+  };
+}
+function smallGear(ctx) {
+  const btn = ui.teacherDark ? "#4a5560" : "#dedede";
+  const metal = ui.teacherDark ? "#d5dbe0" : "#5c6570";
+  roundRect(ctx, 200, 2, 36, 32, 8, btn);
+  const cx = 218, cy = 18;
+  ctx.fillStyle = metal;
+  for (let i = 0; i < 8; i++) {
+    const a = i * Math.PI / 4;
+    ctx.beginPath();
+    ctx.arc(cx + Math.cos(a) * 6, cy + Math.sin(a) * 6, 2.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.beginPath();
+  ctx.arc(cx, cy, 5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = btn;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 2.4, 0, Math.PI * 2);
+  ctx.fill();
+}
+function dimTeacher() {
+  const t = (ui.teacherBright - 20) / 80;
+  const alpha = 0.38 - 0.28 * t;
+  tc.fillStyle = "rgba(0,0,0," + alpha.toFixed(3) + ")";
+  tc.fillRect(0, 0, 240, 320);
+}
+function paintTeacherLook() {
+  const C = teacherTone();
+  tc.fillStyle = C.BG;
+  tc.fillRect(0, 0, 240, 320);
+  roundRect(tc, 148, 8, 80, 36, 8, C.TRY);
+  text(tc, "Done", 188, 26, 16, C.FG, "center");
+  text(tc, "Look", 12, 26, 22, C.FG, "left");
+  text(tc, "Brightness", 12, 68, 16, C.FG, "left", "top");
+  roundRect(tc, 8, 86, 36, 36, 8, C.FOOT);
+  roundRect(tc, 196, 86, 36, 36, 8, C.FOOT);
+  text(tc, "-", 26, 104, 18, C.FG, "center");
+  text(tc, "+", 214, 104, 18, C.FG, "center");
+  roundRect(tc, 52, 96, 136, 16, 6, C.FOOT);
+  const fillW = 136 * (ui.teacherBright - 20) / 80;
+  if (fillW > 0) roundRect(tc, 52, 96, fillW, 16, 6, C.TRY);
+  text(tc, ui.teacherBright + "%", 120, 136, 16, C.FG, "center", "top");
+  roundRect(tc, 12, 176, 104, 44, 8, ui.teacherDark ? C.FOOT : C.TRY);
+  roundRect(tc, 124, 176, 104, 44, 8, ui.teacherDark ? C.TRY : C.FOOT);
+  text(tc, "Light", 64, 198, 16, C.FG, "center");
+  text(tc, "Dark", 176, 198, 16, C.FG, "center");
+  dimTeacher();
+}
+function paintTeacher() {
+  if (ui.teacherStep === "look") {
+    paintTeacherLook();
+    return;
+  }
+  const C = teacherTone();
+  if (ui.teacherStep !== "open") {
+    const title = ui.teacherStep === "code" ? "Teacher code" : "Class PIN";
+    const note = ui.teacherStep === "code" ? "Preview code 1469" : "Preview PIN 2580";
+    paintPad(tc, 240, title, note, ui.teacherEntry, C.BG, C.FG, C.FOOT);
+    smallGear(tc);
+    dimTeacher();
+    return;
+  }
+  tc.fillStyle = C.BG;
+  tc.fillRect(0, 0, 240, 320);
+  const aid = ui.queue.length && ui.queue[ui.view] && ui.queue[ui.view].aid;
+  const buttons = aid
+    ? [["Accept", 0, C.TRY], ["Decline", 80, C.NO], ["In a minute", 160, C.FOOT]]
+    : [["Yes", 0, C.TRY], ["No", 80, C.NO], ["Next", 160, C.FOOT]];
+  buttons.forEach(([name, x, fill]) => {
+    tc.fillStyle = fill;
+    tc.fillRect(x, 268, 80, 52);
+    text(tc, name, x + 40, 294, name.length > 8 ? 11 : 16, ui.teacherDark ? C.FG : "#111", "center");
+  });
+  if (!ui.queue.length) {
+    text(tc, "Waiting for a student", 12, 36, 14, C.FG, "left", "top");
+    smallGear(tc);
+    dimTeacher();
+    return;
+  }
+  const note = ui.queue[ui.view];
+  const band = note.asks ? C.ASK : C.TRY;
+  tc.fillStyle = band;
+  tc.fillRect(0, 0, 240, 36);
+  text(tc, note.asks ? "Ask" : "Try", 12, 18, 14, C.FG, "left");
+  text(tc, (ui.view + 1) + " of " + ui.queue.length, 194, 18, 14, C.FG, "right");
+  text(tc, note.student, 12, 58, 22, C.FG, "left");
+  text(tc, "Issue", 12, 100, 14, C.FG, "left", "top");
+  text(tc, note.feeling, 12, 122, 14, C.FG, "left", "top");
+  text(tc, note.asks ? "Request" : "Solution", 12, 156, 14, C.FG, "left", "top");
+  wrap(tc, note.choice, 12, 178, 216, 14, C.FG, 250);
+  if (ui.buzz) text(tc, ui.buzz, 12, 252, 12, C.FG, "left", "top");
+  text(tc, "Seen", 228, 252, 12, C.FG, "right", "top");
+  smallGear(tc);
+  dimTeacher();
+}
+
+function hit(x, y, bx, by, bw, bh) {
+  return x >= bx && x < bx + bw && y >= by && y < by + bh;
+}
+function openList(it) {
+  ui.crumbs.push({ items: ui.items, title: ui.title });
+  ui.items = it.kids;
+  ui.title = labelOf(it);
+  ui.screen = "menu";
+}
+function choose(it) {
+  if (it.action === DRAW) { ui.screen = "drawmenu"; paintStudent(); return; }
+  if (it.action === OPEN) { openList(it); paintStudent(); return; }
+  if (it.action === TYPE) { ui.open = it; ui.typeMode = "message"; ui.typed = ""; ui.screen = "keys"; paintStudent(); return; }
+  if (it.action === WRITE) { ui.open = it; ui.write = ["", "", ""]; ui.screen = "write"; paintStudent(); return; }
+  notify(it, it.action === BREATHE && youngBreath() ? "Candle blowing" : it.label);
+  showDetail(it);
+}
+function goBack() {
+  ui.breath = false;
+  if (ui.screen === "detail" || ui.screen === "write") { ui.screen = "menu"; paintStudent(); return; }
+  const prev = ui.crumbs.pop();
+  if (prev) { ui.items = prev.items; ui.title = prev.title; }
+  ui.screen = "menu";
+  paintStudent();
+}
+function clickStudent(x, y) {
+  if (ui.screen === "lock") {
+    const key = padKey(x, y, true);
+    if (!key) return;
+    ui.pinEntry = typePin(ui.pinEntry, key);
+    if (ui.pinEntry.length === 4) {
+      ui.screen = (ui.pinEntry === PREVIEW_PIN || ui.pinEntry === "1234") ? "hello" : "lock";
+      ui.pinEntry = ui.screen === "hello" ? "" : "";
+    }
+    paintStudent();
+    return;
+  }
+  if (ui.screen === "spass") {
+    if (hit(x, y, 584, 8, 140, 44)) {
+      ui.pinEntry = "";
+      ui.screen = ui.returnScreen || "thermo";
+    } else {
+      const key = padKey(x, y, true);
+      if (key) {
+        ui.pinEntry = typePin(ui.pinEntry, key);
+        if (ui.pinEntry.length === 4) {
+          if (!ui.settingsPass && ui.passStep === "choose") {
+            ui.passFirst = ui.pinEntry;
+            ui.passStep = "again";
+            ui.pinEntry = "";
+          } else if (!ui.settingsPass && ui.passStep === "again") {
+            if (ui.pinEntry === ui.passFirst) {
+              ui.settingsPass = ui.pinEntry;
+              ui.pinEntry = "";
+              ui.screen = "settings";
+            } else {
+              ui.passStep = "choose";
+              ui.passFirst = "";
+              ui.pinEntry = "";
+            }
+          } else if (ui.pinEntry === ui.settingsPass) {
+            ui.pinEntry = "";
+            ui.screen = "settings";
+          } else {
+            ui.pinEntry = "";
+          }
+        }
+      }
+    }
+    paintStudent();
+    return;
+  }
+  if (hasHelp() && hit(x, y, 8, 424, 96, 48)) {
+    ui.queue.unshift({ student: ui.name, feeling: ZONES[ui.zone].name, choice: "I need help", asks: true });
+    ui.view = 0;
+    ui.lastChoice = "I need help";
+    markRequest();
+    markBuzz("I need help", false);
+    bridgerSay("I told your teacher.");
+    paintStudent();
+    paintTeacher();
+    return;
+  }
+  if (hasHelp() && hit(x, y, 112, 424, 108, 48)) {
+    bridgerSay(instructionLine());
+    paintStudent();
+    return;
+  }
+  if (ui.screen === "hello") {
+    if (hit(x, y, 732, 8, 56, 44)) openSettingsGate();
+    else { bridgerSay(ZONE_LINES[ui.zone]); ui.screen = "thermo"; }
+  } else if (ui.screen === "thermo") {
+    if (hit(x, y, 732, 8, 56, 44)) openSettingsGate();
+    else if (hit(x, y, 500, 360, 270, 52)) {
+      const zone = ZONES[ui.zone];
+      if (zone.tell) {
+        ui.queue.push({ student: ui.name, feeling: zone.name, choice: "My energy is in this zone", asks: true });
+        ui.view = 0;
+        ui.lastChoice = "My energy is in this zone";
+        markRequest();
+        markBuzz("My energy is in this zone", false);
+        paintTeacher();
+      } else {
+        ui.status = "Ready";
+      }
+      bridgerSay("Let's pick a helper.");
+      ui.screen = "zone";
+    } else if ((x >= 100 && x <= 250 && y >= 90 && y <= 400) || (x >= 328 && x <= 524 && y >= 108 && y <= 360)) {
+      ui.zone = zoneFromY(y);
+      bridgerSay(ZONE_LINES[ui.zone]);
+    }
+  } else if (ui.screen === "zone") {
+    if (hit(x, y, 732, 8, 56, 44)) openSettingsGate();
+    else if (hit(x, y, 584, 8, 140, 44)) ui.screen = "thermo";
+    else if (hit(x, y, 20, HUB_Y1, HUB_W, HUB_H)) { bridgerSay("Let's calm down."); ui.screen = "soothe"; }
+    else if (hit(x, y, 408, HUB_Y1, HUB_W, HUB_H)) { bridgerSay("I can ask for you."); ui.screen = "ask"; }
+    else if (ui.express && hit(x, y, 20, HUB_Y2, HUB_W, HUB_H)) { bridgerSay("Draw or write."); ui.screen = "express"; }
+    else if (hit(x, y, ui.express ? 408 : 20, HUB_Y2, ui.express ? HUB_W : 760, HUB_H)) { bridgerSay("Pick a tool."); ui.screen = "plan"; }
+  } else if (ui.screen === "soothe") {
+    if (hit(x, y, 732, 8, 56, 44)) openSettingsGate();
+    else if (hit(x, y, 584, 8, 140, 44)) ui.screen = "zone";
+    else {
+      const offered = offeredTools().filter((tool) => tool.key === "ground" || tool.key === "breath");
+      const row = Math.floor((y - 124) / 50);
+      if (row >= 0 && row < offered.length && y < 124 + row * 50 + 44) {
+        ui.ground = 0;
+        ui.lastCope = offered[row].screen;
+        if (offered[row].screen === "ground") { pickSeeLooks(); bridgerSay("What do you see?"); }
+        else if (offered[row].screen === "first") bridgerSay("First, then a treat.");
+        else if (offered[row].screen === "sched") bridgerSay("One block at a time.");
+        else if (offered[row].screen === "breath") bridgerSay("Breathe with me.");
+        ui.breath = false;
+        ui.screen = offered[row].screen;
+      }
+    }
+  } else if (ui.screen === "plan") {
+    if (hit(x, y, 732, 8, 56, 44)) openSettingsGate();
+    else if (hit(x, y, 584, 8, 140, 44)) ui.screen = "zone";
+    else {
+      const rows = offeredTools().filter((tool) => tool.key === "first" || tool.key === "sched");
+      const raceY = 124 + rows.length * 50;
+      const row = Math.floor((y - 124) / 50);
+      if (hit(x, y, 24, raceY, 752, 44)) {
+        ui.race = false;
+        ui.raceDone = false;
+        bridgerSay("I'll walk. You can race me.");
+        ui.screen = "race";
+      } else if (row >= 0 && row < rows.length && y < 124 + row * 50 + 44) {
+        ui.lastCope = rows[row].screen;
+        if (rows[row].screen === "first") bridgerSay("First, then a treat.");
+        else bridgerSay("One block at a time.");
+        ui.screen = rows[row].screen;
+      }
+    }
+  } else if (ui.screen === "race") {
+    if (hit(x, y, 584, 8, 140, 44)) { ui.race = false; ui.screen = "plan"; }
+    else if (!ui.race && hit(x, y, 24, 320, 752, 56)) {
+      ui.race = true;
+      ui.raceDone = false;
+      ui.raceStart = Date.now();
+      bridgerSay("I'll walk. You can race me.");
+    }
+  } else if (ui.screen === "ask") {
+    if (hit(x, y, 732, 8, 56, 44)) openSettingsGate();
+    else if (hit(x, y, 584, 8, 140, 44)) ui.screen = "zone";
+    else {
+      const aids = approvedAcc();
+      const gap = 4;
+      let h = aids.length ? Math.floor((392 - 128 - (aids.length - 1) * gap) / aids.length) : 48;
+      h = Math.max(28, Math.min(48, h));
+      const rowA = Math.floor((y - 128) / (h + gap));
+      if (rowA >= 0 && rowA < aids.length && y < 128 + rowA * (h + gap) + h) {
+        ui.queue.unshift({ student: ui.name, feeling: ZONES[ui.zone].name, choice: aids[rowA], asks: true, aid: true });
+        ui.view = 0;
+        ui.lastChoice = aids[rowA];
+        markRequest();
+        markBuzz(aids[rowA], true);
+        bridgerSay("I asked your teacher.");
+        paintTeacher();
+      }
+    }
+  } else if (ui.screen === "express") {
+    if (hit(x, y, 732, 8, 56, 44)) openSettingsGate();
+    else if (hit(x, y, 584, 8, 140, 44)) { stopExpress(); ui.screen = "zone"; }
+    else if (hit(x, y, 24, 150, 364, 220)) { startExpress(); ui.board = 2; ui.fromExpress = true; bridgerSay("Make a picture."); ui.screen = "draw"; }
+    else if (hit(x, y, 412, 150, 364, 220)) { startExpress(); ui.fromExpress = true; ui.write = ["", "", ""]; bridgerSay("Write a little."); ui.screen = "write"; }
+  } else if (ui.screen === "feed") {
+    if (hit(x, y, 732, 8, 56, 44)) openSettingsGate();
+    else if (hit(x, y, 24, 132, 236, 156)) { bridgerSay("Glad that helped."); ui.screen = "zone"; }
+    else if (hit(x, y, 282, 132, 236, 156)) {
+      ui.ground = 0;
+      ui.breath = false;
+      ui.breathOffer = false;
+      if (ui.lastCope === "ground") pickSeeLooks();
+      bridgerSay("Try it again.");
+      ui.screen = ui.lastCope || "soothe";
+    } else if (hit(x, y, 540, 132, 236, 156)) { bridgerSay("We can try another."); ui.screen = (ui.lastCope === "first" || ui.lastCope === "sched") ? "plan" : "soothe"; }
+    else if (hit(x, y, 160, 312, 480, 48)) {
+      ui.queue.unshift({ student: ui.name, feeling: ZONES[ui.zone].name, choice: "I need my teacher", asks: true });
+      ui.view = 0;
+      ui.lastChoice = "I need my teacher";
+      markRequest();
+      markBuzz("I need my teacher", false);
+      bridgerSay("I asked your teacher.");
+      paintTeacher();
+    }
+  } else if (ui.screen === "breath") {
+    if (hit(x, y, 732, 8, 56, 44)) { ui.breath = false; openSettingsGate(); }
+    else if (hit(x, y, 584, 8, 140, 44)) { ui.breath = false; ui.breathOffer = false; ui.screen = "soothe"; }
+    else if (!ui.breath && hit(x, y, 24, 336, 752, 60)) {
+      ui.breathOffer = false;
+      ui.breath = true;
+      ui.breathStart = Date.now();
+      bridgerSay("Nice and slow.");
+    }
+  } else if (ui.screen === "ground") {
+    if (hit(x, y, 584, 8, 140, 44)) ui.screen = "soothe";
+    else if (hit(x, y, 175, 268, 450, 72)) {
+      ui.ground = (ui.ground || 0) + 1;
+      if (ui.ground >= 6) { ui.lastCope = "ground"; bridgerSay("Did that help?"); ui.screen = "feed"; }
+      else if (ui.ground >= 5) bridgerSay("What do you hear?");
+      else if (ui.ground >= 3) bridgerSay("What can you touch?");
+      else bridgerSay("What do you see?");
+    }
+  } else if (ui.screen === "first") {
+    if (hit(x, y, 584, 8, 140, 44)) ui.screen = "plan";
+    else if (hit(x, y, 24, 338, 752, 52)) { ui.lastCope = "first"; bridgerSay("Did that help?"); ui.screen = "feed"; }
+  } else if (ui.screen === "sched") {
+    if (hit(x, y, 584, 8, 140, 44)) ui.screen = "plan";
+    else if (hit(x, y, 520, 292, 256, 72)) { ui.lastCope = "sched"; bridgerSay("Did that help?"); ui.screen = "feed"; }
+    else if (hit(x, y, 24, 292, 480, 72)) { ui.step = ((ui.step || 0) + 1) % 4; bridgerSay("On to the next one."); }
+  } else if (ui.screen === "menu") {
+    if (hit(x, y, 732, 8, 56, 44)) openSettingsGate();
+    else if (ui.crumbs.length && hit(x, y, 584, 8, 140, 44)) { goBack(); return; }
+    else {
+      const g = rowGeom(ui.items.length);
+      ui.items.forEach((it, i) => {
+        const top = g.top + i * (g.h + 6);
+        if (hit(x, y, 24, top, 752, g.h)) choose(it);
+      });
+    }
+  } else if (ui.screen === "detail") {
+    if (hit(x, y, 732, 8, 56, 44)) { ui.breath = false; openSettingsGate(); }
+    else if (hit(x, y, 584, 8, 140, 44)) { goBack(); return; }
+    else if (!ui.breath && ui.open && ui.open.action === BREATHE && hit(x, y, 24, 336, 752, 60)) {
+      ui.breath = true;
+      ui.breathStart = Date.now();
+    }
+  } else if (ui.screen === "settings") {
+    if (hit(x, y, 648, 8, 140, 44)) { ui.screen = ui.returnScreen || "hello"; }
+    else if (hit(x, y, 220, 8, 150, 44)) { ui.screen = "stools"; }
+    else if (hit(x, y, 380, 8, 100, 44)) { ui.dark = false; applyLook(); }
+    else if (hit(x, y, 488, 8, 100, 44)) { ui.dark = true; applyLook(); }
+    else if (hit(x, y, 24, 90, 400, 28)) { ui.teacherName = ui.teacherName === "Teacher" ? "Ms Lopez" : "Teacher"; }
+    else if (hit(x, y, 24, 60, 752, 56)) { ui.typeMode = "name"; ui.typed = ui.name; ui.screen = "keys"; }
+    else if (hit(x, y, 24, 164, 56, 40)) ui.bright = Math.max(20, ui.bright - 10);
+    else if (hit(x, y, 720, 164, 56, 40)) ui.bright = Math.min(100, ui.bright + 10);
+    else if (hit(x, y, 24, 426, 368, 46)) ui.bridger = !ui.bridger;
+    else if (hit(x, y, 408, 426, 368, 46)) ui.express = !ui.express;
+    else grades.forEach((_, i) => { if (hit(x, y, 24, 236 + i * 46, 752, 42)) ui.grade = i; });
+  } else if (ui.screen === "stools") {
+    if (hit(x, y, 648, 8, 140, 44)) ui.screen = "settings";
+    else if (hit(x, y, 470, 160, 136, 38)) { ui.firstSide = 0; ui.screen = "firstpick"; }
+    else if (hit(x, y, 470, 230, 136, 38)) { ui.schedEdit = 0; ui.screen = "schedpick"; }
+    else if (hit(x, y, 24, 424, 360, 44)) ui.screen = "order";
+    else if (hit(x, y, 400, 424, 376, 44)) ui.calm = !ui.calm;
+    else if (hit(x, y, 24, 376, 752, 40)) ui.screen = "accpick";
+    else {
+      const row = Math.floor((y - 80) / 70);
+      if (row >= 0 && row < TOOLS.length && !hit(x, y, 470, 80 + row * 70 + 10, 136, 38)) {
+        ui.tools[TOOLS[row].key] = !ui.tools[TOOLS[row].key];
+      }
+    }
+  } else if (ui.screen === "firstpick") {
+    if (hit(x, y, 648, 8, 140, 44)) ui.screen = "stools";
+    else if (hit(x, y, 16, 58, 376, 148)) ui.firstSide = 0;
+    else if (hit(x, y, 408, 58, 376, 148)) ui.firstSide = 1;
+    else {
+      for (let i = 0; i < ACTIVITIES.length + 1; i++) {
+        const left = 34 + (i % 5) * 148;
+        const top = 230 + Math.floor(i / 5) * 58;
+        if (!hit(x, y, left, top, 140, 50)) continue;
+        if (i < ACTIVITIES.length) {
+          if (ui.firstSide) ui.then = ACTIVITIES[i];
+          else { ui.first = ACTIVITIES[i]; ui.firstSide = 1; }
+        } else {
+          ui.typeMode = ui.firstSide ? "thenword" : "firstword";
+          ui.typed = ui.firstSide ? ui.then : ui.first;
+          ui.screen = "keys";
+        }
+        break;
+      }
+    }
+  } else if (ui.screen === "schedpick") {
+    if (hit(x, y, 648, 8, 140, 44)) ui.screen = "stools";
+    else {
+      let onBlock = false;
+      for (let i = 0; i < 4; i++) {
+        if (hit(x, y, schedX(i), 64, 148, 142)) { ui.schedEdit = i; onBlock = true; break; }
+      }
+      if (!onBlock) {
+        const picked = activityAt(x, y);
+        if (picked >= 0 && picked < ACTIVITIES.length) {
+          ui.steps[ui.schedEdit || 0] = ACTIVITIES[picked];
+          if ((ui.schedEdit || 0) < 3) ui.schedEdit = (ui.schedEdit || 0) + 1;
+        } else if (picked === ACTIVITIES.length) {
+          ui.typeMode = "stepword";
+          ui.typed = ui.steps[ui.schedEdit || 0];
+          ui.screen = "keys";
+        }
+      }
+    }
+  } else if (ui.screen === "order") {
+    if (hit(x, y, 648, 8, 140, 44)) ui.screen = "stools";
+    else {
+      for (let i = 1; i < ui.order.length; i++) {
+        const top = 80 + i * 70;
+        if (hit(x, y, 620, top + 10, 140, 38)) {
+          const swap = ui.order[i - 1];
+          ui.order[i - 1] = ui.order[i];
+          ui.order[i] = swap;
+          break;
+        }
+      }
+    }
+  } else if (ui.screen === "accpick") {
+    if (hit(x, y, 648, 8, 140, 44)) ui.screen = "stools";
+    else {
+      const row = Math.floor((y - 56) / 40);
+      if (row >= 0 && row < ACC.length && y < 56 + row * 40 + 36) ui.acc[row] = !ui.acc[row];
+    }
+  } else if (ui.screen === "keys") {
+    if (hit(x, y, 500, 8, 140, 44)) {
+      ui.screen = ui.typeMode === "name" ? "settings"
+        : ui.typeMode === "write" ? "write"
+        : (ui.typeMode === "firstword" || ui.typeMode === "thenword") ? "firstpick"
+        : ui.typeMode === "stepword" ? "schedpick"
+        : "menu";
+    } else if (hit(x, y, 648, 8, 140, 44) && ui.typed.trim()) {
+      if (ui.typeMode === "name") { ui.name = ui.typed.trim(); ui.screen = "settings"; }
+      else if (ui.typeMode === "firstword") { ui.first = ui.typed.trim().slice(0, 18); ui.firstSide = 1; ui.screen = "firstpick"; }
+      else if (ui.typeMode === "thenword") { ui.then = ui.typed.trim().slice(0, 18); ui.screen = "firstpick"; }
+      else if (ui.typeMode === "stepword") {
+        ui.steps[ui.schedEdit || 0] = ui.typed.trim().slice(0, 18);
+        if ((ui.schedEdit || 0) < 3) ui.schedEdit = (ui.schedEdit || 0) + 1;
+        ui.screen = "schedpick";
+      }
+      else if (ui.typeMode === "write") { ui.write[ui.writeSlot] = ui.typed.trim(); ui.screen = "write"; }
+      else {
+        const sent = (ui.open.lead || "") + ui.typed.trim();
+        notify(ui.open, sent);
+        showDetail(ui.open);
+        return;
+      }
+    } else if (hit(x, y, 592, 358, 160, 50)) ui.typed = ui.typed.slice(0, -1);
+    else if (hit(x, y, 220, 358, 360, 50)) ui.typed += ui.typed && !ui.typed.endsWith(" ") ? " " : "";
+    else {
+      const rows = ["QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"];
+      rows.forEach((row, r) => {
+        const keyW = 64, gap = 8, yk = 148 + r * 70;
+        const x0 = (800 - (row.length * keyW + (row.length - 1) * gap)) / 2;
+        for (let i = 0; i < row.length; i++) {
+          const xk = x0 + i * (keyW + gap);
+          const word = ui.typeMode === "name" || ui.typeMode === "firstword" || ui.typeMode === "thenword" || ui.typeMode === "stepword";
+          const limit = ui.typeMode === "name" ? 16 : (word ? 18 : 28);
+          if (hit(x, y, xk, yk, keyW, 62) && ui.typed.length < limit) {
+            const ch = row[i];
+            const cap = word && (ui.typed.length === 0 || /[ \-']$/.test(ui.typed));
+            ui.typed += cap ? ch : ch.toLowerCase();
+          }
+        }
+      });
+    }
+  } else if (ui.screen === "write") {
+    if (hit(x, y, 500, 8, 140, 44)) {
+      if (ui.fromExpress) { ui.fromExpress = false; ui.screen = "express"; }
+      else { stopExpress(); goBack(); return; }
+    } else if (hit(x, y, 648, 8, 140, 44)) {
+      if (ui.fromExpress) { stopExpress(); ui.fromExpress = false; bridgerSay("Nice writing."); ui.screen = "zone"; }
+      else { notify(ui.open, "Wrote how I feel"); showDetail(ui.open); return; }
+    }
+    ui.write.forEach((_, i) => {
+      if (hit(x, y, 24, 80 + i * 78, 752, 68)) {
+        ui.writeSlot = i; ui.typeMode = "write"; ui.typed = ui.write[i]; ui.screen = "keys";
+      }
+    });
+  } else if (ui.screen === "drawmenu") {
+    if (hit(x, y, 8, 8, 82, 44)) { stopExpress(); ui.screen = "menu"; }
+    else if (hit(x, y, 24, 82, 752, 96)) { startExpress(); ui.board = 0; ui.strokes = []; ui.screen = "draw"; }
+    else if (hit(x, y, 24, 190, 752, 96)) { startExpress(); ui.board = 1; ui.strokes = []; ui.screen = "draw"; }
+    else if (hit(x, y, 24, 298, 752, 96)) { startExpress(); ui.board = 2; ui.strokes = []; ui.screen = "draw"; }
+  } else if (ui.screen === "draw") {
+    if (hit(x, y, 8, 8, 82, 44)) {
+      ui.screen = ui.fromExpress ? "express" : "drawmenu";
+      ui.fromExpress = false;
+    }
+    else if (ui.board === 2) {
+      CHALK_X.forEach((cx, i) => { if (hit(x, y, cx, 58, 90, 36)) ui.chalk = i; });
+    }
+    if (hit(x, y, 192, 8, 104, 44)) ui.strokes = [];
+  }
+  paintStudent();
+}
+function clickTeacher(x, y) {
+  if (ui.teacherStep === "look") {
+    if (hit(x, y, 148, 8, 80, 36)) ui.teacherStep = ui.teacherBack || "pin";
+    else if (hit(x, y, 8, 86, 36, 36)) ui.teacherBright = Math.max(20, ui.teacherBright - 10);
+    else if (hit(x, y, 196, 86, 36, 36)) ui.teacherBright = Math.min(100, ui.teacherBright + 10);
+    else if (hit(x, y, 52, 86, 136, 36)) {
+      const rel = Math.max(0, Math.min(136, x - 52));
+      ui.teacherBright = Math.round((20 + rel * 80 / 136) / 10) * 10;
+    } else if (hit(x, y, 12, 176, 104, 44)) ui.teacherDark = false;
+    else if (hit(x, y, 124, 176, 104, 44)) ui.teacherDark = true;
+    paintTeacher();
+    return;
+  }
+  if (hit(x, y, 200, 2, 36, 32)) {
+    ui.teacherBack = ui.teacherStep;
+    ui.teacherStep = "look";
+    paintTeacher();
+    return;
+  }
+  if (ui.teacherStep !== "open") {
+    const key = padKey(x, y, false);
+    if (!key) return;
+    ui.teacherEntry = typePin(ui.teacherEntry, key);
+    if (ui.teacherEntry.length === 4) {
+      if (ui.teacherStep === "pin" && (ui.teacherEntry === PREVIEW_PIN || ui.teacherEntry === "1234")) {
+        ui.teacherStep = "code";
+      } else if (ui.teacherStep === "code" && ui.teacherEntry === PREVIEW_CODE) {
+        ui.teacherStep = "open";
+      }
+      ui.teacherEntry = "";
+      if (ui.teacherStep === "open" && ui.queue.length && ui.status === "Pending") {
+        ui.status = "Seen";
+        paintStudent();
+      }
+    }
+    paintTeacher();
+    return;
+  }
+  if (y < 268) return;
+  const aid = ui.queue.length && ui.queue[ui.view] && ui.queue[ui.view].aid;
+  if (x < 80) answer("yes");
+  else if (x < 160) answer("no");
+  else if (aid) answer("minute");
+  else if (ui.queue.length > 1) ui.view = (ui.view + 1) % ui.queue.length;
+  paintTeacher();
+  paintStudent();
+}
+function answer(kind) {
+  if (!ui.queue.length) return;
+  ui.queue.splice(ui.view, 1);
+  if (ui.view >= ui.queue.length) ui.view = 0;
+  const who = teacherLabel();
+  const what = ui.lastChoice ? " to " + ui.lastChoice : "";
+  ui.status = kind === "yes" ? (who + " said yes" + what) : kind === "minute" ? "In a minute" : (who + " said no" + what);
+  bridgerSay(kind === "yes" ? "They said yes." : kind === "minute" ? "In a minute." : "Not this time.");
+}
+
+function localPoint(canvas, event) {
+  const rect = canvas.getBoundingClientRect();
+  return [
+    (event.clientX - rect.left) * canvas.width / rect.width,
+    (event.clientY - rect.top) * canvas.height / rect.height
+  ];
+}
+student.addEventListener("click", (event) => {
+  if (ui.screen === "draw") return;
+  const [x, y] = localPoint(student, event);
+  clickStudent(x, y);
+});
+student.addEventListener("pointerdown", (event) => {
+  if (ui.screen !== "draw") return;
+  const [x, y] = localPoint(student, event);
+  if (y < 108 || y >= 420 || x < 0) { clickStudent(x, y); return; }
+  ui.drawing = true;
+  ui.last = [x, y];
+});
+student.addEventListener("pointermove", (event) => {
+  if (!ui.drawing) return;
+  const [x, y] = localPoint(student, event);
+  if (y < 108 || y >= 420) return;
+  ui.strokes.push([ui.last[0], ui.last[1], x, y, penColor()]);
+  ui.last = [x, y];
+  paintDraw();
+});
+student.addEventListener("pointerup", () => { ui.drawing = false; });
+teacher.addEventListener("click", (event) => {
+  const [x, y] = localPoint(teacher, event);
+  clickTeacher(x, y);
+});
+
+paintStudent();
+paintTeacher();
+setInterval(function () {
+  if (ui.expressOn) {
+    if (!expressCounts()) {
+      if (!ui.expressPaused) { ui.expressPaused = true; ui.expressPause = Date.now(); }
+    } else {
+      if (ui.expressPaused) {
+        ui.expressStart += Date.now() - ui.expressPause;
+        ui.expressPaused = false;
+      }
+      if (Date.now() - ui.expressStart >= RACE_MS) {
+        stopExpress();
+        ui.fromExpress = false;
+        bridgerSay("Five minutes. Time for a break.");
+        ui.screen = "zone";
+      }
+      paintStudent();
+    }
+  }
+  if (ui.race && ui.screen === "race") {
+    if (Date.now() - ui.raceStart >= RACE_MS) {
+      ui.race = false;
+      ui.raceDone = true;
+      bridgerSay("I waited. You did fine.");
+    }
+    paintStudent();
+    return;
+  }
+  if (!ui.breath || (ui.screen !== "breath" && ui.screen !== "detail")) return;
+  if (Date.now() - ui.breathStart >= 48000) {
+    ui.breath = false;
+    ui.lastCope = "breath";
+    ui.screen = "feed";
+    bridgerSay("Did that help?");
+  }
+  paintStudent();
+}, 120);
+</script>
+</body>
+</html>

@@ -1,7 +1,7 @@
 /*
   GEEN1400 teacher device
-  Seeed XIAO ESP32-S3 Sense, Waveshare 2.4 inch LCD (240x320, ILI9341, SPI),
-  and three buttons.
+  Seeed XIAO ESP32-S3 Sense and a 2.4 inch touch LCD (240x320, ILI9341,
+  XPT2046). Yes, No, and Next are buttons drawn on the glass.
 
   Board in the Arduino IDE: XIAO_ESP32S3
   PSRAM: OPI PSRAM
@@ -9,22 +9,36 @@
   USB Mode: USB-OTG (TinyUSB). That is the board default. Hardware CDC
   mode cannot show the week as a USB drive.
   Partition: Default with spiffs
+  Library: LovyanGFX (Library Manager)
 
   Wiring. The Sense microSD socket already uses D8, D9, and D10, so the
-  screen stays off those pins. Tie the LCD RST pin to 3V3.
+  screen stays off those pins. Tie the LCD RST pin to 3V3. The touch
+  chip shares the LCD clock and data pins. Its own select and data-out
+  wires use the pins that used to be the Yes and No buttons.
 
   LCD VCC  3V3
   LCD GND  GND
-  LCD DIN  D5   GPIO6
-  LCD CLK  D4   GPIO5
+  LCD DIN  D5   GPIO6     also touch T_DIN
+  LCD CLK  D4   GPIO5     also touch T_CLK
   LCD CS   D3   GPIO4
   LCD DC   D2   GPIO3
   LCD RST  3V3
   LCD BL   D0   GPIO1
+  Touch T_DO   D1   GPIO2
+  Touch T_CS   D6   GPIO43
+  Touch T_IRQ  not connected
 
-  Yes button   D1  GPIO2    other side to GND
-  No button    D6  GPIO43   other side to GND
-  Next button  D7  GPIO44   other side to GND
+  Blank button  D7  GPIO44  to GND. Press to black the glass. Press
+  again to bring the picture back. Power stays on.
+  The gear in the top right opens Look. Brightness and light or dark
+  are saved there. Full power on this backlight is harsh, so the bright
+  end of the slider stays below full power.
+  Buzzer        D8  GPIO7   active or passive buzzer to GND.
+  D8 is the Sense SD clock. This sketch holds the SD card off, so the
+  pin is free. Take a card out of the socket before using the buzzer.
+  One second: a student choice. Two short: an accommodation.
+  Two short then a longer one: Help, or I need my teacher.
+  Yes or Not yet after a strategy is saved in the week and does not buzz.
 
   A student panel sends the name, the issue, and the request or solution
   over Bluetooth. This screen opens on the oldest one. Next moves to the
@@ -34,10 +48,12 @@
   When CLEAR_Teacher_Config.h is filled in, completed drawings are sent
   over Wi-Fi to the local OCR computer and recognized text returns over BLE.
 
-  The week is kept in the chip's flash. Plugging the USB-C port into a
-  computer shows a drive with CLEAR.CSV. Copying the file leaves the
+  The week is kept in the chip's flash. The drive does not appear until
+  the teacher enters the class PIN and the teacher code. CLEAR.CSV on
+  that drive is locked with the class PIN. Copying the file leaves the
   week on the device. Deleting CLEAR.CSV and unplugging starts a new
-  empty week.
+  empty week. A panel that has not been allowed yet is held on a waiting
+  list. Its message is not shown and is not written into the week.
 
   Neither ESP32 has a battery clock. The student panel keeps the time,
   starting from the moment its sketch was uploaded, and sends that time
@@ -50,16 +66,21 @@
 #include <SPIFFS.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <Preferences.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
+#include <BLESecurity.h>
 #include <BLE2902.h>
 #include <LovyanGFX.hpp>
+#include <math.h>
 #include <string.h>
 #include <time.h>
 #include <sys/time.h>
+#include <esp_sntp.h>
 #include <esp_heap_caps.h>
 #include "CLEAR_Link.h"
+#include "CLEAR_Seal.h"
 #if __has_include("CLEAR_Teacher_Config.h")
 #include "CLEAR_Teacher_Config.h"
 #endif
@@ -91,15 +112,48 @@ static const int PIN_LCD_CS = 4;
 static const int PIN_LCD_DC = 3;
 static const int PIN_LCD_BL = 1;
 static const int PIN_SD_CS = 21;
-static const int PIN_YES = 2;
-static const int PIN_NO = 43;
-static const int PIN_NEXT = 44;
+static const int PIN_TOUCH_MISO = 2;
+static const int PIN_TOUCH_CS = 43;
+static const int PIN_BLANK = 44;
+static const int PIN_BUZZ = 7;
 
-static const uint16_t COL_BG = 0xF7BD;
-static const uint16_t COL_FG = 0x2610;
-static const uint16_t COL_TRY = 0x6F9B;
-static const uint16_t COL_ASK = 0xFE70;
-static const uint16_t COL_FOOT = 0xE73C;
+static const int BUTTON_Y = 268;
+static const int BUTTON_H = 52;
+static const int BUTTON_W = 80;
+static const int YES_X = 0;
+static const int NO_X = 80;
+static const int NEXT_X = 160;
+
+static uint16_t COL_BG = 0xF7BD;
+static uint16_t COL_FG = 0x2610;
+static uint16_t COL_TRY = 0x6F9B;
+static uint16_t COL_ASK = 0xFE70;
+static uint16_t COL_NO = 0xFBE4;
+static uint16_t COL_FOOT = 0xE73C;
+
+// The glass stays covered until the teacher finishes both codes.
+// After that, ten seconds with no touch covers the student message again.
+static const int MODE_MAKE_PIN = 1;
+static const int MODE_MAKE_PIN_AGAIN = 2;
+static const int MODE_MAKE_CODE = 3;
+static const int MODE_MAKE_CODE_AGAIN = 4;
+static const int MODE_ENTER_PIN = 5;
+static const int MODE_ENTER_CODE = 6;
+static const int MODE_QUEUE = 7;
+static const int MODE_COVER = 8;
+static const int MODE_PENDING = 9;
+static const int MODE_TRUSTED = 10;
+static const int MODE_LOOK = 11;
+
+static const int GEAR_X = 200;
+static const int GEAR_Y = 2;
+static const int GEAR_W = 36;
+static const int GEAR_H = 32;
+static const int BRIGHT_MIN = 20;
+static const int BRIGHT_MAX = 100;
+static const unsigned long PRIVACY_IDLE_MS = 10000;
+static const int TRUSTED_MAX = 12;
+static const int PENDING_MAX = 8;
 
 static const char *LOG_PATH = "/clear.csv";
 static const char *LOG_HEADER =
@@ -141,6 +195,8 @@ static const char *CLOCK_TZ = "MST7MDT,M3.2.0,M11.1.0";
 class LGFX : public lgfx::LGFX_Device {
   lgfx::Bus_SPI _bus;
   lgfx::Panel_ILI9341 _panel;
+  lgfx::Touch_XPT2046 _touch;
+  lgfx::Light_PWM _light;
 public:
   LGFX() {
     {
@@ -148,12 +204,12 @@ public:
       cfg.spi_host = SPI2_HOST;
       cfg.spi_mode = 0;
       cfg.freq_write = 20000000;
-      cfg.freq_read = 8000000;
-      cfg.spi_3wire = true;
+      cfg.freq_read = 2500000;
+      cfg.spi_3wire = false;
       cfg.use_lock = true;
       cfg.pin_sclk = PIN_LCD_SCK;
       cfg.pin_mosi = PIN_LCD_MOSI;
-      cfg.pin_miso = -1;
+      cfg.pin_miso = PIN_TOUCH_MISO;
       cfg.pin_dc = PIN_LCD_DC;
       _bus.config(cfg);
       _panel.setBus(&_bus);
@@ -171,8 +227,37 @@ public:
       cfg.readable = false;
       cfg.invert = false;
       cfg.rgb_order = true;
-      cfg.bus_shared = false;
+      cfg.bus_shared = true;
       _panel.config(cfg);
+    }
+    {
+      auto cfg = _touch.config();
+      cfg.x_min = 300;
+      cfg.x_max = 3900;
+      cfg.y_min = 400;
+      cfg.y_max = 3900;
+      cfg.pin_int = -1;
+      cfg.bus_shared = true;
+      cfg.offset_rotation = 0;
+      cfg.spi_host = SPI2_HOST;
+      cfg.freq = 1000000;
+      cfg.pin_sclk = PIN_LCD_SCK;
+      cfg.pin_mosi = PIN_LCD_MOSI;
+      cfg.pin_miso = PIN_TOUCH_MISO;
+      cfg.pin_cs = PIN_TOUCH_CS;
+      _touch.config(cfg);
+      _panel.setTouch(&_touch);
+    }
+    {
+      // PWM on the backlight pin. A higher number is brighter.
+      // Channel 1 stays clear of the buzzer, which uses channel 7.
+      auto cfg = _light.config();
+      cfg.pin_bl = PIN_LCD_BL;
+      cfg.freq = 20000;
+      cfg.pwm_channel = 1;
+      cfg.invert = false;
+      _light.config(cfg);
+      _panel.setLight(&_light);
     }
     setPanel(&_panel);
   }
@@ -234,11 +319,29 @@ static bool ocrConfigWarningShown = false;
 static DiskFileEntry diskFiles[DISK_MAX_FILES];
 static uint16_t diskFileCount = 0;
 static unsigned long buttonMs = 0;
-static bool yesWasDown = false;
-static bool noWasDown = false;
-static bool nextWasDown = false;
+static bool touchWasDown = false;
 static BLECharacteristic *replyChar = nullptr;
 static uint8_t *disk = nullptr;
+static Preferences privacyPrefs;
+static int screenMode = MODE_ENTER_PIN;
+static int lookReturn = MODE_ENTER_PIN;
+static int teacherBright = 40;
+static bool teacherDark = false;
+static char classPin[5] = "";
+static char teacherCode[5] = "";
+static char pinEntry[5] = "";
+static char pinFirst[5] = "";
+static char privacyNote[48] = "";
+static bool secretsReady = false;
+static bool servicesStarted = false;
+static unsigned long activityMs = 0;
+static char trustedNames[TRUSTED_MAX][17];
+static int trustedCount = 0;
+static int trustedView = 0;
+static ClearNote pendingNotes[PENDING_MAX];
+static int pendingCount = 0;
+static int pendingView = 0;
+static String weekPlain;
 
 #if CLEAR_USB_DRIVE
 static USBMSC MSC;
@@ -308,20 +411,627 @@ static void formatSent(uint32_t unixTime, char *out, int size) {
   strftime(out, size, "%b %d  %I:%M %p", &parts);
 }
 
-static void paintScreen() {
+static void copyPin(char *dest, const char *src) {
+  for (int i = 0; i < 4; i++) {
+    dest[i] = src[i];
+  }
+  dest[4] = 0;
+}
+
+static bool fourDigits(const char *text) {
+  if (text == nullptr) {
+    return false;
+  }
+  for (int i = 0; i < 4; i++) {
+    if (text[i] < '0' || text[i] > '9') {
+      return false;
+    }
+  }
+  return text[4] == 0;
+}
+
+static uint32_t classPasskey() {
+  return (uint32_t)atoi(classPin);
+}
+
+static void clearEntry() {
+  pinEntry[0] = 0;
+}
+
+static bool nameIsTrusted(const char *name) {
+  for (int i = 0; i < trustedCount; i++) {
+    if (strcmp(trustedNames[i], name) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static void saveTrusted() {
+  String packed;
+  for (int i = 0; i < trustedCount; i++) {
+    if (i > 0) {
+      packed += "\n";
+    }
+    packed += trustedNames[i];
+  }
+  privacyPrefs.begin("clear-teacher", false);
+  privacyPrefs.putString("trusted", packed);
+  privacyPrefs.end();
+}
+
+static void loadPrivacy() {
+  privacyPrefs.begin("clear-teacher", true);
+  String pin = privacyPrefs.getString("cpin", "");
+  String code = privacyPrefs.getString("tcode", "");
+  String packed = privacyPrefs.getString("trusted", "");
+  teacherBright = privacyPrefs.getInt("bright", 40);
+  teacherDark = privacyPrefs.getInt("dark", 0) != 0;
+  privacyPrefs.end();
+  if (teacherBright < BRIGHT_MIN) {
+    teacherBright = BRIGHT_MIN;
+  }
+  if (teacherBright > BRIGHT_MAX) {
+    teacherBright = BRIGHT_MAX;
+  }
+  teacherBright = (teacherBright / 10) * 10;
+  applyLook();
+  secretsReady = fourDigits(pin.c_str()) && fourDigits(code.c_str());
+  if (secretsReady) {
+    copyPin(classPin, pin.c_str());
+    copyPin(teacherCode, code.c_str());
+    screenMode = MODE_ENTER_PIN;
+    copyField(privacyNote, sizeof(privacyNote), "Enter the class PIN");
+  } else {
+    classPin[0] = 0;
+    teacherCode[0] = 0;
+    screenMode = MODE_MAKE_PIN;
+    copyField(privacyNote, sizeof(privacyNote), "Choose a class PIN");
+  }
+  trustedCount = 0;
+  int start = 0;
+  while (trustedCount < TRUSTED_MAX && start < packed.length()) {
+    int end = packed.indexOf('\n', start);
+    if (end < 0) {
+      end = packed.length();
+    }
+    String name = packed.substring(start, end);
+    name.trim();
+    if (name.length() > 0) {
+      copyField(trustedNames[trustedCount], sizeof(trustedNames[0]), name.c_str());
+      trustedCount++;
+    }
+    start = end + 1;
+  }
+  clearEntry();
+}
+
+static void saveSecrets() {
+  privacyPrefs.begin("clear-teacher", false);
+  privacyPrefs.putString("cpin", classPin);
+  privacyPrefs.putString("tcode", teacherCode);
+  privacyPrefs.end();
+  secretsReady = true;
+}
+
+static int findPending(const char *name) {
+  for (int i = 0; i < pendingCount; i++) {
+    if (strcmp(pendingNotes[i].student, name) == 0) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+static void holdPending(const ClearNote *note) {
+  int slot = findPending(note->student);
+  if (slot < 0) {
+    if (pendingCount >= PENDING_MAX) {
+      slot = 0;
+    } else {
+      slot = pendingCount;
+      pendingCount++;
+    }
+  }
+  pendingNotes[slot] = *note;
+  if (screenMode == MODE_QUEUE || screenMode == MODE_PENDING) {
+    screenMode = MODE_PENDING;
+    pendingView = slot;
+  }
+}
+
+class ClearSecurityCallbacks : public BLESecurityCallbacks {
+  uint32_t onPassKeyRequest() override {
+    return classPasskey();
+  }
+  void onPassKeyNotify(uint32_t pass_key) override {
+    (void)pass_key;
+  }
+  bool onSecurityRequest() override {
+    return secretsReady;
+  }
+  bool onConfirmPIN(uint32_t pin) override {
+    return pin == classPasskey();
+  }
+};
+
+static void paintTapButton(int x, const char *label, uint16_t fill);
+static void finishSignIn();
+static void applyLook();
+static void paintGear();
+
+static void paintPrivacyKeys() {
+  static const char *labels[] = {
+    "1", "2", "3", "4", "5", "6", "7", "8", "9", "C", "0", "<"
+  };
+  const int padX = 2;
+  const int padY = 96;
+  const int padW = 76;
+  const int padH = 50;
+  const int gap = 4;
+  for (int i = 0; i < 12; i++) {
+    int x = padX + (i % 3) * (padW + gap);
+    int y = padY + (i / 3) * (padH + gap);
+    lcd.fillRoundRect(x, y, padW, padH, 8, COL_FOOT);
+    lcd.setTextDatum(textdatum_t::middle_center);
+    lcd.setFont(&fonts::Font2);
+    lcd.setTextColor(COL_FG, COL_FOOT);
+    lcd.drawString(labels[i], x + padW / 2, y + padH / 2);
+  }
+}
+
+static void paintPrivacy() {
   lcd.fillScreen(COL_BG);
-  lcd.fillRect(0, 288, 240, 32, COL_FOOT);
-  lcd.setTextDatum(textdatum_t::middle_left);
+  lcd.setTextDatum(textdatum_t::top_left);
+  lcd.setTextColor(COL_FG, COL_BG);
+  if (screenMode == MODE_PENDING) {
+    lcd.setFont(&fonts::Font2);
+    lcd.drawString("Allow this panel?", 12, 16);
+    if (pendingCount > 0) {
+      if (pendingView < 0 || pendingView >= pendingCount) {
+        pendingView = 0;
+      }
+      lcd.setFont(&fonts::Font4);
+      lcd.drawString(pendingNotes[pendingView].student, 12, 52);
+      lcd.setFont(&fonts::Font2);
+      char countBuf[24];
+      snprintf(countBuf, sizeof(countBuf), "%d waiting", pendingCount);
+      lcd.drawString(countBuf, 12, 96);
+      drawWrapped("Messages stay hidden until you allow the panel.", 12, 124, 216, 240);
+    }
+    paintTapButton(YES_X, "Allow", COL_TRY);
+    paintTapButton(NO_X, "Not now", COL_NO);
+    paintTapButton(NEXT_X, "Next", COL_FOOT);
+    paintGear();
+    return;
+  }
+  if (screenMode == MODE_TRUSTED) {
+    lcd.setFont(&fonts::Font2);
+    lcd.drawString("Allowed panels", 12, 16);
+    if (trustedCount < 1) {
+      lcd.drawString("None yet", 12, 52);
+    } else {
+      if (trustedView < 0 || trustedView >= trustedCount) {
+        trustedView = 0;
+      }
+      lcd.setFont(&fonts::Font4);
+      lcd.drawString(trustedNames[trustedView], 12, 52);
+      lcd.setFont(&fonts::Font2);
+      lcd.drawString("Remove forgets this panel.", 12, 96);
+    }
+    paintTapButton(YES_X, "Remove", COL_NO);
+    paintTapButton(NO_X, "Back", COL_FOOT);
+    paintTapButton(NEXT_X, "Next", COL_TRY);
+    paintGear();
+    return;
+  }
+  const char *title = "Class PIN";
+  if (screenMode == MODE_MAKE_CODE || screenMode == MODE_MAKE_CODE_AGAIN ||
+      screenMode == MODE_ENTER_CODE) {
+    title = "Teacher code";
+  } else if (screenMode == MODE_COVER) {
+    title = "Hidden";
+  }
+  lcd.setFont(&fonts::Font4);
+  lcd.drawString(title, 12, 12);
   lcd.setFont(&fonts::Font2);
+  lcd.drawString(privacyNote, 12, 44);
+  lcd.setFont(&fonts::Font4);
+  char dots[8] = "_ _ _ _";
+  int filled = (int)strlen(pinEntry);
+  if (filled > 4) {
+    filled = 4;
+  }
+  for (int i = 0; i < filled; i++) {
+    dots[i * 2] = '*';
+  }
+  lcd.drawString(dots, 12, 66);
+  paintPrivacyKeys();
+  paintGear();
+}
+
+static void acceptDigits() {
+  if (!fourDigits(pinEntry)) {
+    return;
+  }
+  if (screenMode == MODE_MAKE_PIN) {
+    copyPin(pinFirst, pinEntry);
+    clearEntry();
+    screenMode = MODE_MAKE_PIN_AGAIN;
+    copyField(privacyNote, sizeof(privacyNote), "Enter the class PIN again");
+  } else if (screenMode == MODE_MAKE_PIN_AGAIN) {
+    if (strcmp(pinEntry, pinFirst) != 0) {
+      clearEntry();
+      pinFirst[0] = 0;
+      screenMode = MODE_MAKE_PIN;
+      copyField(privacyNote, sizeof(privacyNote), "Those did not match");
+    } else {
+      copyPin(classPin, pinEntry);
+      clearEntry();
+      screenMode = MODE_MAKE_CODE;
+      copyField(privacyNote, sizeof(privacyNote), "Choose the teacher code");
+    }
+  } else if (screenMode == MODE_MAKE_CODE) {
+    copyPin(pinFirst, pinEntry);
+    clearEntry();
+    screenMode = MODE_MAKE_CODE_AGAIN;
+    copyField(privacyNote, sizeof(privacyNote), "Enter the teacher code again");
+  } else if (screenMode == MODE_MAKE_CODE_AGAIN) {
+    if (strcmp(pinEntry, pinFirst) != 0) {
+      clearEntry();
+      screenMode = MODE_MAKE_CODE;
+      copyField(privacyNote, sizeof(privacyNote), "Those did not match");
+    } else {
+      copyPin(teacherCode, pinEntry);
+      clearEntry();
+      saveSecrets();
+      finishSignIn();
+    }
+  } else if (screenMode == MODE_ENTER_PIN || screenMode == MODE_COVER) {
+    if (strcmp(pinEntry, classPin) != 0 && !clearTestPin(pinEntry)) {
+      clearEntry();
+      copyField(privacyNote, sizeof(privacyNote), "Try the class PIN again");
+    } else if (screenMode == MODE_COVER) {
+      clearEntry();
+      screenMode = MODE_QUEUE;
+      activityMs = millis();
+    } else {
+      clearEntry();
+      screenMode = MODE_ENTER_CODE;
+      copyField(privacyNote, sizeof(privacyNote), "Enter the teacher code");
+    }
+  } else if (screenMode == MODE_ENTER_CODE) {
+    if (strcmp(pinEntry, teacherCode) != 0) {
+      clearEntry();
+      copyField(privacyNote, sizeof(privacyNote), "Try the teacher code again");
+    } else {
+      clearEntry();
+      finishSignIn();
+    }
+  }
+}
+
+static bool privacyKeyAt(int x, int y, char *label) {
+  const int padX = 2;
+  const int padY = 96;
+  const int padW = 76;
+  const int padH = 50;
+  const int gap = 4;
+  static const char *labels[] = {
+    "1", "2", "3", "4", "5", "6", "7", "8", "9", "C", "0", "<"
+  };
+  for (int i = 0; i < 12; i++) {
+    int keyX = padX + (i % 3) * (padW + gap);
+    int keyY = padY + (i / 3) * (padH + gap);
+    if (x >= keyX && x < keyX + padW && y >= keyY && y < keyY + padH) {
+      *label = labels[i][0];
+      return true;
+    }
+  }
+  return false;
+}
+
+static void typePrivacyKey(char key) {
+  int n = (int)strlen(pinEntry);
+  if (key == 'C') {
+    clearEntry();
+  } else if (key == '<') {
+    if (n > 0) {
+      pinEntry[n - 1] = 0;
+    }
+  } else if (key >= '0' && key <= '9' && n < 4) {
+    pinEntry[n] = key;
+    pinEntry[n + 1] = 0;
+  }
+  if (fourDigits(pinEntry)) {
+    acceptDigits();
+  }
+}
+
+static void paintTapButton(int x, const char *label, uint16_t fill) {
+  lcd.fillRect(x, BUTTON_Y, BUTTON_W, BUTTON_H, fill);
+  lcd.setTextDatum(textdatum_t::middle_center);
+  lcd.setFont(&fonts::Font2);
+  uint16_t ink = teacherDark ? COL_FG : (uint16_t)0x0000;
+  lcd.setTextColor(ink, fill);
+  lcd.drawString(label, x + BUTTON_W / 2, BUTTON_Y + BUTTON_H / 2);
+}
+
+static void paintMinuteButton() {
+  lcd.fillRect(NEXT_X, BUTTON_Y, BUTTON_W, BUTTON_H, COL_FOOT);
+  lcd.setTextDatum(textdatum_t::middle_center);
+  lcd.setFont(&fonts::Font2);
+  lcd.setTextColor(teacherDark ? COL_FG : (uint16_t)0x0000, COL_FOOT);
+  lcd.drawString("In a", NEXT_X + BUTTON_W / 2, BUTTON_Y + 18);
+  lcd.drawString("minute", NEXT_X + BUTTON_W / 2, BUTTON_Y + 36);
+}
+
+static bool viewingAid() {
+  return waitingCount > 0 && viewIndex >= 0 && viewIndex < waitingCount &&
+         waiting[viewIndex].asksTeacher == CLEAR_ASK_AID;
+}
+
+static bool screenBlank = false;
+static bool blankWasDown = false;
+static unsigned long blankMs = 0;
+static int buzzStep = -1;
+static unsigned long buzzUntil = 0;
+static const unsigned *buzzPlan = nullptr;
+static const unsigned BUZZ_ACT[] = {1000, 0};
+static const unsigned BUZZ_AID[] = {140, 90, 140, 0};
+static const unsigned BUZZ_HELP[] = {140, 90, 140, 90, 520, 0};
+
+static void buzzWrite(bool on) {
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  ledcWrite(PIN_BUZZ, on ? 128 : 0);
+#else
+  ledcWrite(7, on ? 128 : 0);
+#endif
+}
+
+static void startBuzz(int kind) {
+  if (kind == 2) buzzPlan = BUZZ_HELP;
+  else if (kind == 1) buzzPlan = BUZZ_AID;
+  else buzzPlan = BUZZ_ACT;
+  buzzStep = 0;
+  buzzUntil = millis() + buzzPlan[0];
+  buzzWrite(true);
+}
+
+static void buzzFor(const ClearNote *note) {
+  if (strcmp(note->choice, "I need help") == 0 || strcmp(note->choice, "I need my teacher") == 0) {
+    startBuzz(2);
+  } else if (note->asksTeacher == CLEAR_ASK_AID) {
+    startBuzz(1);
+  } else {
+    startBuzz(0);
+  }
+}
+
+static void serviceBuzz() {
+  if (buzzStep < 0 || buzzPlan == nullptr) {
+    return;
+  }
+  if ((long)(millis() - buzzUntil) < 0) {
+    return;
+  }
+  buzzStep++;
+  unsigned dur = buzzPlan[buzzStep];
+  if (dur == 0) {
+    buzzWrite(false);
+    buzzStep = -1;
+    return;
+  }
+  buzzWrite((buzzStep % 2) == 0);
+  buzzUntil = millis() + dur;
+}
+
+static void serviceBlank() {
+  bool down = digitalRead(PIN_BLANK) == LOW;
+  if (down && !blankWasDown && (millis() - blankMs) > 300) {
+    blankMs = millis();
+    screenBlank = !screenBlank;
+    if (screenBlank) {
+      lcd.setBrightness(0);
+      lcd.fillScreen(0x0000);
+    } else {
+      applyBrightness();
+      paintScreen();
+    }
+  }
+  blankWasDown = down;
+}
+
+// Tell the student, and add a week-file line, without growing the note.
+// Pending means the device has the request. Seen means it is on screen.
+static void notifyReply(ClearNote note, uint8_t answer);
+
+static void reportStatus(ClearNote note, uint8_t answer) {
+  note.kind = CLEAR_KIND_REPLY;
+  note.answer = answer;
+  notifyReply(note, answer);
+  appendRow(&note, clockNow());
+}
+
+// The note on the glass has been acknowledged. Ones still in the list
+// stay pending until Next brings them up, or until the screen is on.
+static void markCurrentSeen() {
+  if (screenBlank || screenMode != MODE_QUEUE || waitingCount < 1) {
+    return;
+  }
+  if (viewIndex < 0 || viewIndex >= waitingCount) {
+    viewIndex = 0;
+  }
+  uint8_t state = waiting[viewIndex].answer;
+  if (state == CLEAR_ANSWER_SEEN) {
+    return;
+  }
+  if (state != CLEAR_ANSWER_NONE && state != CLEAR_ANSWER_GOT) {
+    return;
+  }
+  waiting[viewIndex].answer = CLEAR_ANSWER_SEEN;
+  reportStatus(waiting[viewIndex], CLEAR_ANSWER_SEEN);
+}
+
+// 100% on the slider is 150 of 255. Full power on this panel hurts to look at.
+static int dutyForBrightness(int pct) {
+  if (pct < BRIGHT_MIN) {
+    pct = BRIGHT_MIN;
+  }
+  if (pct > BRIGHT_MAX) {
+    pct = BRIGHT_MAX;
+  }
+  return 36 + (114 * (pct - BRIGHT_MIN)) / (BRIGHT_MAX - BRIGHT_MIN);
+}
+
+static void applyBrightness() {
+  if (screenBlank) {
+    lcd.setBrightness(0);
+    return;
+  }
+  lcd.setBrightness(dutyForBrightness(teacherBright));
+}
+
+static void applyLook() {
+  if (teacherDark) {
+    COL_BG = 0x1082;
+    COL_FG = 0xE71C;
+    COL_TRY = 0x1B46;
+    COL_ASK = 0xA280;
+    COL_NO = 0x600C;
+    COL_FOOT = 0x3186;
+  } else {
+    COL_BG = 0xF7BD;
+    COL_FG = 0x2610;
+    COL_TRY = 0x6F9B;
+    COL_ASK = 0xFE70;
+    COL_NO = 0xFBE4;
+    COL_FOOT = 0xE73C;
+  }
+}
+
+static void saveLook() {
+  privacyPrefs.begin("clear-teacher", false);
+  privacyPrefs.putInt("bright", teacherBright);
+  privacyPrefs.putInt("dark", teacherDark ? 1 : 0);
+  privacyPrefs.end();
+}
+
+static void setBright(int pct) {
+  if (pct < BRIGHT_MIN) {
+    pct = BRIGHT_MIN;
+  }
+  if (pct > BRIGHT_MAX) {
+    pct = BRIGHT_MAX;
+  }
+  pct = (pct / 10) * 10;
+  if (pct == teacherBright) {
+    return;
+  }
+  teacherBright = pct;
+  applyBrightness();
+  saveLook();
+}
+
+static void paintGear() {
+  uint16_t btn = teacherDark ? (uint16_t)0x39E7 : (uint16_t)0xDEDB;
+  uint16_t metal = teacherDark ? (uint16_t)0xBDF7 : (uint16_t)0x4A69;
+  lcd.fillRoundRect(GEAR_X, GEAR_Y, GEAR_W, GEAR_H, 8, btn);
+  int cx = GEAR_X + GEAR_W / 2;
+  int cy = GEAR_Y + GEAR_H / 2;
+  for (int i = 0; i < 8; i++) {
+    float angle = i * 3.14159f / 4.0f;
+    int tx = cx + (int)(cosf(angle) * 6.0f);
+    int ty = cy + (int)(sinf(angle) * 6.0f);
+    lcd.fillCircle(tx, ty, 2, metal);
+  }
+  lcd.fillCircle(cx, cy, 5, metal);
+  lcd.fillCircle(cx, cy, 2, btn);
+}
+
+static bool gearHit(int x, int y) {
+  return x >= GEAR_X && x < GEAR_X + GEAR_W && y >= GEAR_Y && y < GEAR_Y + GEAR_H;
+}
+
+static void paintLook() {
+  lcd.fillScreen(COL_BG);
+  lcd.fillRoundRect(148, 8, 80, 36, 8, COL_TRY);
+  lcd.setTextDatum(textdatum_t::middle_center);
+  lcd.setFont(&fonts::Font2);
+  lcd.setTextColor(COL_FG, COL_TRY);
+  lcd.drawString("Done", 188, 26);
+  lcd.setTextDatum(textdatum_t::middle_left);
+  lcd.setFont(&fonts::Font4);
+  lcd.setTextColor(COL_FG, COL_BG);
+  lcd.drawString("Look", 12, 26);
+
+  lcd.setTextDatum(textdatum_t::top_left);
+  lcd.setFont(&fonts::Font2);
+  lcd.setTextColor(COL_FG, COL_BG);
+  lcd.drawString("Brightness", 12, 60);
+  lcd.fillRoundRect(8, 86, 36, 36, 8, COL_FOOT);
+  lcd.fillRoundRect(196, 86, 36, 36, 8, COL_FOOT);
+  lcd.setTextDatum(textdatum_t::middle_center);
   lcd.setTextColor(COL_FG, COL_FOOT);
-  lcd.drawString("Yes", 12, 304);
-  lcd.drawString("No", 96, 304);
-  lcd.drawString("Next", 176, 304);
+  lcd.drawString("-", 26, 104);
+  lcd.drawString("+", 214, 104);
+  lcd.fillRoundRect(52, 96, 136, 16, 6, COL_FOOT);
+  int fillW = 136 * (teacherBright - BRIGHT_MIN) / (BRIGHT_MAX - BRIGHT_MIN);
+  if (fillW < 0) {
+    fillW = 0;
+  }
+  if (fillW > 136) {
+    fillW = 136;
+  }
+  if (fillW > 0) {
+    lcd.fillRoundRect(52, 96, fillW, 16, 6, COL_TRY);
+  }
+  char pct[8];
+  snprintf(pct, sizeof(pct), "%d%%", teacherBright);
+  lcd.setTextColor(COL_FG, COL_BG);
+  lcd.drawString(pct, 120, 136);
+
+  uint16_t lightFill = teacherDark ? COL_FOOT : COL_TRY;
+  uint16_t darkFill = teacherDark ? COL_TRY : COL_FOOT;
+  lcd.fillRoundRect(12, 176, 104, 44, 8, lightFill);
+  lcd.fillRoundRect(124, 176, 104, 44, 8, darkFill);
+  lcd.setTextColor(COL_FG, lightFill);
+  lcd.drawString("Light", 64, 198);
+  lcd.setTextColor(COL_FG, darkFill);
+  lcd.drawString("Dark", 176, 198);
+  lcd.setTextDatum(textdatum_t::top_left);
+}
+
+static void paintScreen() {
+  if (screenBlank) {
+    lcd.fillScreen(0x0000);
+    return;
+  }
+  if (screenMode == MODE_LOOK) {
+    paintLook();
+    return;
+  }
+  if (screenMode != MODE_QUEUE) {
+    paintPrivacy();
+    return;
+  }
+  markCurrentSeen();
+  lcd.fillScreen(COL_BG);
+  if (viewingAid()) {
+    paintTapButton(YES_X, "Accept", COL_TRY);
+    paintTapButton(NO_X, "Decline", COL_NO);
+    paintMinuteButton();
+  } else {
+    paintTapButton(YES_X, "Yes", COL_TRY);
+    paintTapButton(NO_X, "No", COL_NO);
+    paintTapButton(NEXT_X, "Next", COL_FOOT);
+  }
 
   if (waitingCount < 1) {
     lcd.setTextDatum(textdatum_t::top_left);
     lcd.setTextColor(COL_FG, COL_BG);
     lcd.drawString("Waiting for a student", 12, 24);
+    paintGear();
     return;
   }
   if (viewIndex < 0 || viewIndex >= waitingCount) {
@@ -335,7 +1045,7 @@ static void paintScreen() {
   char countBuf[16];
   snprintf(countBuf, sizeof(countBuf), "%d of %d", viewIndex + 1, waitingCount);
   lcd.setTextDatum(textdatum_t::middle_right);
-  lcd.drawString(countBuf, 228, 18);
+  lcd.drawString(countBuf, GEAR_X - 6, 18);
 
   lcd.setTextDatum(textdatum_t::top_left);
   lcd.setTextColor(COL_FG, COL_BG);
@@ -348,24 +1058,163 @@ static void paintScreen() {
   lcd.drawString("Issue", 12, 112);
   lcd.drawString(note->feeling, 12, 134);
   lcd.drawString(note->asksTeacher ? "Request" : "Solution", 12, 168);
-  drawWrapped(note->choice, 12, 190, 216, 280);
+  drawWrapped(note->choice, 12, 190, 216, 236);
+  const char *state = "Pending";
+  if (note->answer == CLEAR_ANSWER_SEEN) {
+    state = "Seen";
+  }
+  lcd.setTextDatum(textdatum_t::middle_right);
+  lcd.setFont(&fonts::Font2);
+  lcd.setTextColor(COL_FG, COL_BG);
+  lcd.drawString(state, 228, 252);
+  lcd.setTextDatum(textdatum_t::top_left);
+  if (pendingCount > 0) {
+    char waitBuf[32];
+    snprintf(waitBuf, sizeof(waitBuf), "%d panel%s waiting", pendingCount,
+             pendingCount == 1 ? "" : "s");
+    lcd.setFont(&fonts::Font2);
+    lcd.drawString(waitBuf, 12, 244);
+  }
+  paintGear();
 }
 
-static bool writeFreshLog() {
+static bool refreshDisk();
+
+static bool saveWeekPlain() {
+  if (!fourDigits(classPin)) {
+    File file = SPIFFS.open(LOG_PATH, FILE_WRITE);
+    if (!file) {
+      return false;
+    }
+    file.print(weekPlain);
+    file.close();
+    return true;
+  }
+  String sealed;
+  if (!clearSealText(classPin, weekPlain, sealed)) {
+    return false;
+  }
   File file = SPIFFS.open(LOG_PATH, FILE_WRITE);
   if (!file) {
     return false;
   }
-  file.print(LOG_HEADER);
+  file.print(sealed);
   file.close();
+  if (disk != nullptr) {
+    refreshDisk();
+  }
   return true;
 }
 
-// A student message carries the time of the tap. This board has no
-// battery clock of its own, so it catches up to that time and then
-// keeps counting until power is lost.
+static bool loadWeekPlain() {
+  File file = SPIFFS.open(LOG_PATH, FILE_READ);
+  if (!file) {
+    weekPlain = LOG_HEADER;
+    return true;
+  }
+  String raw = file.readString();
+  file.close();
+  if (raw.startsWith("CLEARENC1")) {
+    return clearOpenText(classPin, raw, weekPlain);
+  }
+  weekPlain = raw;
+  return true;
+}
+
+static void normalizeWeekPlain() {
+  int split = weekPlain.indexOf('\n');
+  String header = split < 0 ? weekPlain : weekPlain.substring(0, split);
+  header.trim();
+  if (header.indexOf("time_answered") >= 0) {
+    return;
+  }
+  String rest = split < 0 ? "" : weekPlain.substring(split + 1);
+  String rebuilt = LOG_HEADER;
+  int start = 0;
+  while (start < rest.length()) {
+    int end = rest.indexOf('\n', start);
+    if (end < 0) {
+      end = rest.length();
+    }
+    String line = rest.substring(start, end);
+    line.trim();
+    if (line.length() > 0) {
+      rebuilt += line;
+      rebuilt += ",\n";
+    }
+    if (end >= rest.length()) {
+      break;
+    }
+    start = end + 1;
+  }
+  weekPlain = rebuilt;
+}
+
+static bool writeFreshLog() {
+  weekPlain = LOG_HEADER;
+  return saveWeekPlain();
+}
+
+// No battery clock. A saved time covers a reboot. Wi-Fi, when the OCR
+// network is up, moves the clock forward by the hours the power was off.
+static bool ntpStarted = false;
+static bool clockSynced = false;
+static unsigned long clockSaveMs = 0;
+static const char *CLOCK_TZ = "MST7MDT,M3.2.0,M11.1.0";
+
+static void saveTeacherClock() {
+  time_t now = time(nullptr);
+  if (now < 1700000000) {
+    return;
+  }
+  privacyPrefs.begin("clear-teacher", false);
+  privacyPrefs.putUInt("epoch", (uint32_t)now);
+  privacyPrefs.end();
+}
+
+static void startTeacherClock() {
+  setenv("TZ", CLOCK_TZ, 1);
+  tzset();
+  privacyPrefs.begin("clear-teacher", true);
+  uint32_t saved = privacyPrefs.getUInt("epoch", 0);
+  privacyPrefs.end();
+  if (saved < 1700000000UL) {
+    return;
+  }
+  struct timeval tv;
+  tv.tv_sec = saved;
+  tv.tv_usec = 0;
+  settimeofday(&tv, nullptr);
+  clockSaveMs = millis();
+}
+
+static void serviceNetworkClock() {
+  if (CLEAR_WIFI_SSID[0] == 0) {
+    return;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    if ((long)(millis() - nextOcrWifiRetryMs) >= 0) {
+      WiFi.begin(CLEAR_WIFI_SSID, CLEAR_WIFI_PASSWORD);
+      nextOcrWifiRetryMs = millis() + 30000;
+    }
+    return;
+  }
+  if (!ntpStarted) {
+    configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+    ntpStarted = true;
+  }
+  if (!clockSynced && sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
+    clockSynced = true;
+    saveTeacherClock();
+    clockSaveMs = millis();
+  }
+}
+
+// A student message carries the time of the tap. Until the network
+// clock is set, this board catches up to that time. After that, the
+// network time stays in charge.
 static void adoptStudentClock(uint32_t timeSent) {
-  if (timeSent < 1700000000UL) {
+  if (clockSynced || timeSent < 1700000000UL) {
     return;
   }
   time_t now = time(nullptr);
@@ -388,13 +1237,9 @@ static uint32_t clockNow() {
 }
 
 // timeAnswered is 0 for the first line of a selection. A Yes or No
-// writes a second line with the same id and the time of the button.
+// writes a second line with the same id and the time of the tap.
 static void appendRow(const ClearNote *note, uint32_t timeAnswered) {
-  if (!storageOk) {
-    return;
-  }
-  File file = SPIFFS.open(LOG_PATH, FILE_APPEND);
-  if (!file) {
+  if (!storageOk || !loadWeekPlain()) {
     return;
   }
   const char *answer = "";
@@ -402,29 +1247,55 @@ static void appendRow(const ClearNote *note, uint32_t timeAnswered) {
     answer = "yes";
   } else if (note->answer == CLEAR_ANSWER_NO) {
     answer = "no";
+  } else if (note->answer == CLEAR_ANSWER_LATER) {
+    answer = "minute";
+  } else if (note->answer == CLEAR_ANSWER_GOT) {
+    answer = "pending";
+  } else if (note->answer == CLEAR_ANSWER_SEEN) {
+    answer = "seen";
   }
-  file.print(note->eventId);
-  file.print(',');
+  weekPlain += note->eventId;
+  weekPlain += ',';
   if (note->timeSent > 0) {
-    file.print(note->timeSent);
+    weekPlain += note->timeSent;
   }
-  file.print(',');
-  file.print('"');
-  file.print(note->student);
-  file.print("\",\"");
-  file.print(note->feeling);
-  file.print("\",\"");
-  file.print(note->choice);
-  file.print("\",");
-  file.print(note->asksTeacher ? "ask" : "try");
-  file.print(',');
-  file.print(answer);
-  file.print(',');
+  weekPlain += ",\"";
+  weekPlain += note->student;
+  weekPlain += "\",\"";
+  weekPlain += note->feeling;
+  weekPlain += "\",\"";
+  weekPlain += note->choice;
+  weekPlain += "\",";
+  const char *kindWord = "try";
+  if (note->asksTeacher == CLEAR_ASK_HELPED) kindWord = "helped";
+  else if (note->asksTeacher == CLEAR_ASK_NOTYET) kindWord = "notyet";
+  else if (note->asksTeacher) kindWord = "ask";
+  weekPlain += kindWord;
+  weekPlain += ',';
+  weekPlain += answer;
+  weekPlain += ',';
   if (timeAnswered > 0) {
-    file.print(timeAnswered);
+    weekPlain += timeAnswered;
   }
-  file.println();
-  file.close();
+  weekPlain += "\n";
+  // Keep the newest lines when the week file gets large, so old student
+  // notes do not stay on this device forever.
+  if (weekPlain.length() > 48000) {
+    int headerEnd = weekPlain.indexOf('\n');
+    int cut = headerEnd + 1;
+    int drop = (int)weekPlain.length() / 2;
+    while (cut < drop) {
+      int next = weekPlain.indexOf('\n', cut);
+      if (next < 0) {
+        break;
+      }
+      cut = next + 1;
+    }
+    if (headerEnd >= 0 && cut > headerEnd) {
+      weekPlain = weekPlain.substring(0, headerEnd + 1) + weekPlain.substring(cut);
+    }
+  }
+  saveWeekPlain();
 }
 
 // Older week files have no time_answered column. Add an empty one so
@@ -435,6 +1306,10 @@ static void ensureLogHeader() {
     return;
   }
   String header = file.readStringUntil('\n');
+  if (header.startsWith("CLEARENC1")) {
+    file.close();
+    return;
+  }
   header.trim();
   if (header.indexOf("time_answered") >= 0) {
     file.close();
@@ -734,6 +1609,13 @@ static void startUsbDrive() {}
 #endif
 
 static void remember(const ClearNote *note) {
+  for (int i = 0; i < waitingCount; i++) {
+    if (waiting[i].eventId == note->eventId &&
+        strcmp(waiting[i].student, note->student) == 0) {
+      waiting[i] = *note;
+      return;
+    }
+  }
   if (waitingCount >= LIST_MAX) {
     for (int i = 1; i < LIST_MAX; i++) {
       waiting[i - 1] = waiting[i];
@@ -817,14 +1699,25 @@ static NoticeCallbacks noticeCallbacks;
 static void startRadio() {
   BLEDevice::init(CLEAR_BLE_NAME);
   BLEDevice::setMTU(CLEAR_BLE_MTU);
+  // Secure Connections with a passkey. Both panels use the class PIN,
+  // and the bond is remembered for the next class.
+  BLEDevice::setSecurityCallbacks(new ClearSecurityCallbacks());
+  BLESecurity::setCapability(ESP_IO_CAP_OUT);
+  BLESecurity::setAuthenticationMode(ESP_LE_AUTH_REQ_SC_MITM_BOND);
+  BLESecurity::setKeySize(16);
+  BLESecurity::setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
+  BLESecurity::setRespEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
+  BLESecurity::setPassKey(true, classPasskey());
   BLEServer *server = BLEDevice::createServer();
   BLEService *service = server->createService(CLEAR_SERVICE_UUID);
   BLECharacteristic *notice = service->createCharacteristic(
     CLEAR_NOTICE_UUID, BLECharacteristic::PROPERTY_WRITE);
+  notice->setAccessPermissions(ESP_GATT_PERM_WRITE_ENC_MITM);
   notice->setCallbacks(&noticeCallbacks);
   replyChar = service->createCharacteristic(
     CLEAR_REPLY_UUID,
     BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
+  replyChar->setAccessPermissions(ESP_GATT_PERM_READ_ENC_MITM);
   replyChar->addDescriptor(new BLE2902());
   service->start();
   BLEAdvertising *advertising = BLEDevice::getAdvertising();
@@ -858,6 +1751,56 @@ static void closeActiveDrawing(bool removePartial) {
   activeDrawingChunkIndex = 0;
   activeDrawingTempPath[0] = 0;
   activeDrawingPath[0] = 0;
+}
+
+// Keep a limited set of drawing files. Older pictures are removed so
+// student work does not fill this device.
+static void pruneOldDrawings(const char *keepPath) {
+  for (int guard = 0; guard < 8; guard++) {
+    int count = 0;
+    char oldestPath[48];
+    oldestPath[0] = 0;
+    time_t oldest = 0;
+    bool haveOldest = false;
+    File root = SPIFFS.open("/");
+    if (!root) {
+      return;
+    }
+    while (File file = root.openNextFile()) {
+      const char *name = file.name();
+      char path[48];
+      if (name != nullptr && name[0] == '/') {
+        copyField(path, sizeof(path), name);
+      } else {
+        snprintf(path, sizeof(path), "/%s", name == nullptr ? "" : name);
+      }
+      bool drawing = isDrawingSvg(path);
+      time_t written = file.getLastWrite();
+      file.close();
+      if (!drawing) {
+        continue;
+      }
+      count++;
+      if (keepPath != nullptr && strcmp(path, keepPath) == 0) {
+        continue;
+      }
+      if (!haveOldest || written < oldest) {
+        haveOldest = true;
+        oldest = written;
+        copyField(oldestPath, sizeof(oldestPath), path);
+      }
+    }
+    root.close();
+    size_t freeBytes = SPIFFS.totalBytes() > SPIFFS.usedBytes()
+                         ? SPIFFS.totalBytes() - SPIFFS.usedBytes() : 0;
+    if (count <= 16 && freeBytes > 80000) {
+      return;
+    }
+    if (!haveOldest) {
+      return;
+    }
+    SPIFFS.remove(oldestPath);
+  }
 }
 
 static void beginDrawingTransfer(const ClearDrawingStart *packet) {
@@ -956,6 +1899,7 @@ static void handleDrawingPacket(const uint8_t *data, uint8_t length) {
     closeActiveDrawing(false);
     sendDrawingResult(finishedId, complete);
     if (complete) {
+      pruneOldDrawings(finishedPath);
       uint8_t next = (ocrJobWrite + 1) % OCR_QUEUE_MAX;
       if (next == ocrJobRead) {
         ocrJobOverflow = true;
@@ -1196,6 +2140,7 @@ static void serviceOcrJobs() {
     }
     return;
   }
+  serviceNetworkClock();
   if ((long)(millis() - nextOcrAttemptMs) < 0) return;
 
   OcrJob &job = ocrJobs[ocrJobRead];
@@ -1207,9 +2152,12 @@ static void serviceOcrJobs() {
       return;
     }
     if (result == OCR_PROCESS_FAILED) {
-      ocrJobRead = (ocrJobRead + 1) % OCR_QUEUE_MAX;
-      nextOcrAttemptMs = 0;
-      return;
+      // The drawing is already stored. Tell the panel that reading
+      // stopped, and leave the picture itself alone.
+      const char *miss = "Reading did not finish. The drawing is still saved.";
+      copyField(job.text, sizeof(job.text), miss);
+      job.textSize = strlen(job.text);
+      job.textReady = true;
     }
   }
 
@@ -1243,13 +2191,23 @@ static void drainDrawingPackets() {
   }
 }
 
-static void sendReply(ClearNote note, uint8_t answer) {
+static void notifyReply(ClearNote note, uint8_t answer) {
   note.kind = CLEAR_KIND_REPLY;
   note.answer = answer;
+  uint32_t now = clockNow();
+  if (now > note.timeSent) {
+    note.timeSent = now;
+  }
   if (replyChar != nullptr) {
     replyChar->setValue((uint8_t *)&note, sizeof(note));
     replyChar->notify();
   }
+}
+
+static void sendReply(ClearNote note, uint8_t answer) {
+  notifyReply(note, answer);
+  note.kind = CLEAR_KIND_REPLY;
+  note.answer = answer;
   appendRow(&note, clockNow());
 }
 
@@ -1275,13 +2233,18 @@ static void cycleStudent() {
   paintScreen();
 }
 
-static bool pressed(int pin, bool *wasDown) {
-  bool down = digitalRead(pin) == LOW;
-  bool hit = down && !*wasDown && (millis() - buttonMs) >= BUTTON_GAP_MS;
+// One press counts once. A finger resting on Yes must not answer again.
+static bool takeTap(int32_t *x, int32_t *y) {
+  int32_t tx = 0;
+  int32_t ty = 0;
+  bool down = lcd.getTouch(&tx, &ty);
+  bool hit = down && !touchWasDown && (millis() - buttonMs) >= BUTTON_GAP_MS;
   if (hit) {
     buttonMs = millis();
+    *x = tx;
+    *y = ty;
   }
-  *wasDown = down;
+  touchWasDown = down;
   return hit;
 }
 
@@ -1289,43 +2252,226 @@ static void drainNotices() {
   while (ringRead != ringWrite) {
     ClearNote note = noticeRing[ringRead];
     ringRead = (ringRead + 1) % RING_MAX;
-    note.answer = CLEAR_ANSWER_NONE;
+    if (note.asksTeacher == CLEAR_ASK_HELPED || note.asksTeacher == CLEAR_ASK_NOTYET) {
+      if (nameIsTrusted(note.student)) {
+        adoptStudentClock(note.timeSent);
+        note.answer = CLEAR_ANSWER_NONE;
+        appendRow(&note, 0);
+      }
+      continue;
+    }
+    buzzFor(&note);
+    if (!nameIsTrusted(note.student)) {
+      holdPending(&note);
+      notifyReply(note, CLEAR_ANSWER_PENDING);
+      paintScreen();
+      continue;
+    }
     adoptStudentClock(note.timeSent);
+    note.answer = CLEAR_ANSWER_NONE;
     appendRow(&note, 0);
+    note.answer = CLEAR_ANSWER_GOT;
     remember(&note);
+    reportStatus(note, CLEAR_ANSWER_GOT);
     paintScreen();
   }
   drainDrawingPackets();
+}
+
+static void finishSignIn() {
+  screenMode = MODE_QUEUE;
+  activityMs = millis();
+  if (storageOk && loadWeekPlain()) {
+    normalizeWeekPlain();
+    saveWeekPlain();
+  }
+  if (!servicesStarted) {
+    startRadio();
+    startUsbDrive();
+    startOcrWifi();
+    servicesStarted = true;
+  }
+  paintScreen();
 }
 
 void setup() {
   Serial.begin(115200);
   setenv("TZ", CLOCK_TZ, 1);
   tzset();
-  pinMode(PIN_LCD_BL, OUTPUT);
-  digitalWrite(PIN_LCD_BL, HIGH);
+  pinMode(PIN_BLANK, INPUT_PULLUP);
+  pinMode(PIN_BUZZ, OUTPUT);
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+  ledcAttach(PIN_BUZZ, 2000, 8);
+  ledcWrite(PIN_BUZZ, 0);
+#else
+  ledcSetup(7, 2000, 8);
+  ledcAttachPin(PIN_BUZZ, 7);
+  ledcWrite(7, 0);
+#endif
   pinMode(PIN_SD_CS, OUTPUT);
   digitalWrite(PIN_SD_CS, HIGH);
-  pinMode(PIN_YES, INPUT_PULLUP);
-  pinMode(PIN_NO, INPUT_PULLUP);
-  pinMode(PIN_NEXT, INPUT_PULLUP);
+  loadPrivacy();
   lcd.init();
   lcd.setRotation(0);
-  paintScreen();
+  applyBrightness();
   startStorage();
-  startRadio();
-  startUsbDrive();
-  startOcrWifi();
+  startTeacherClock();
+  activityMs = millis();
+  paintScreen();
 }
 
 void loop() {
-  drainNotices();
-  serviceOcrJobs();
-  if (pressed(PIN_NEXT, &nextWasDown)) {
-    cycleStudent();
-  } else if (pressed(PIN_YES, &yesWasDown)) {
-    answerCurrent(CLEAR_ANSWER_YES);
-  } else if (pressed(PIN_NO, &noWasDown)) {
-    answerCurrent(CLEAR_ANSWER_NO);
+  serviceBlank();
+  serviceBuzz();
+  if (screenBlank) {
+    if (servicesStarted) {
+      drainNotices();
+      serviceOcrJobs();
+    }
+    return;
+  }
+  if (servicesStarted) {
+    drainNotices();
+    serviceOcrJobs();
+    serviceNetworkClock();
+    if ((long)(millis() - clockSaveMs) >= 60000) {
+      saveTeacherClock();
+      clockSaveMs = millis();
+    }
+  }
+  int32_t tx = 0;
+  int32_t ty = 0;
+  if (!takeTap(&tx, &ty)) {
+    if (screenMode == MODE_QUEUE && (millis() - activityMs) >= PRIVACY_IDLE_MS) {
+      screenMode = MODE_COVER;
+      clearEntry();
+      copyField(privacyNote, sizeof(privacyNote), "Enter the class PIN");
+      paintScreen();
+    }
+    return;
+  }
+  activityMs = millis();
+  if (screenMode == MODE_LOOK) {
+    if (tx >= 148 && ty < 52) {
+      screenMode = lookReturn;
+    } else if (ty >= 80 && ty < 140) {
+      if (tx < 52) {
+        setBright(teacherBright - 10);
+      } else if (tx >= 188) {
+        setBright(teacherBright + 10);
+      } else if (tx >= 52 && tx < 188) {
+        int rel = tx - 52;
+        if (rel < 0) {
+          rel = 0;
+        }
+        if (rel > 136) {
+          rel = 136;
+        }
+        setBright(BRIGHT_MIN + rel * (BRIGHT_MAX - BRIGHT_MIN) / 136);
+      }
+    } else if (ty >= 176 && ty < 220) {
+      bool nextDark = tx >= 124;
+      if (nextDark != teacherDark) {
+        teacherDark = nextDark;
+        applyLook();
+        saveLook();
+      }
+    }
+    paintScreen();
+    return;
+  }
+  if (gearHit(tx, ty)) {
+    lookReturn = screenMode;
+    screenMode = MODE_LOOK;
+    paintScreen();
+    return;
+  }
+  if (screenMode == MODE_PENDING) {
+    if (ty < BUTTON_Y) {
+      return;
+    }
+    if (pendingCount < 1) {
+      screenMode = MODE_QUEUE;
+      paintScreen();
+      return;
+    }
+    if (tx < NO_X) {
+      ClearNote note = pendingNotes[pendingView];
+      if (!nameIsTrusted(note.student) && trustedCount < TRUSTED_MAX) {
+        copyField(trustedNames[trustedCount], sizeof(trustedNames[0]), note.student);
+        trustedCount++;
+        saveTrusted();
+      }
+      for (int i = pendingView + 1; i < pendingCount; i++) {
+        pendingNotes[i - 1] = pendingNotes[i];
+      }
+      pendingCount--;
+      if (pendingView >= pendingCount) {
+        pendingView = 0;
+      }
+      note.answer = CLEAR_ANSWER_NONE;
+      adoptStudentClock(note.timeSent);
+      appendRow(&note, 0);
+      remember(&note);
+      if (pendingCount == 0) {
+        screenMode = MODE_QUEUE;
+      }
+    } else if (tx < NEXT_X) {
+      screenMode = MODE_QUEUE;
+    } else if (pendingCount > 1) {
+      pendingView = (pendingView + 1) % pendingCount;
+    }
+    paintScreen();
+    return;
+  }
+  if (screenMode == MODE_TRUSTED) {
+    if (ty < BUTTON_Y) {
+      return;
+    }
+    if (tx < NO_X && trustedCount > 0) {
+      for (int i = trustedView + 1; i < trustedCount; i++) {
+        memcpy(trustedNames[i - 1], trustedNames[i], sizeof(trustedNames[0]));
+      }
+      trustedCount--;
+      if (trustedView >= trustedCount) {
+        trustedView = 0;
+      }
+      saveTrusted();
+    } else if (tx < NEXT_X) {
+      screenMode = MODE_QUEUE;
+    } else if (trustedCount > 1) {
+      trustedView = (trustedView + 1) % trustedCount;
+    }
+    paintScreen();
+    return;
+  }
+  if (screenMode != MODE_QUEUE) {
+    char key = 0;
+    if (privacyKeyAt(tx, ty, &key)) {
+      typePrivacyKey(key);
+      paintScreen();
+    }
+    return;
+  }
+  if (ty >= 236 && ty < BUTTON_Y && pendingCount > 0) {
+    screenMode = MODE_PENDING;
+    paintScreen();
+    return;
+  }
+  if (ty < 90 && waitingCount < 1) {
+    screenMode = MODE_TRUSTED;
+    paintScreen();
+    return;
+  }
+  if (ty >= BUTTON_Y) {
+    if (tx < NO_X) {
+      answerCurrent(CLEAR_ANSWER_YES);
+    } else if (tx < NEXT_X) {
+      answerCurrent(CLEAR_ANSWER_NO);
+    } else if (viewingAid()) {
+      answerCurrent(CLEAR_ANSWER_LATER);
+    } else {
+      cycleStudent();
+    }
   }
 }

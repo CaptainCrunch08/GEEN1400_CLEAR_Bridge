@@ -3,8 +3,15 @@
 // change the other the same way, including the field order. BLE sends
 // these packed structures as they are.
 //
-// kind 1 is a student selection/request. kind 2 is the teacher's Yes or No.
-// answer 0 means no answer yet, 1 is yes, 2 is no.
+// kind 1 is a student selection/request. kind 2 is the teacher's answer.
+// answer 0 means no answer yet, 1 is yes, 2 is no, 4 is in a minute.
+// answer 5 means the teacher device has the request (pending).
+// answer 6 means the teacher is looking at it (seen).
+// Yes, no, and in a minute mean the request is answered.
+// asksTeacher 1 is an ask. asksTeacher 2 is an accommodation request.
+// asksTeacher 3 means the student said this strategy helped.
+// asksTeacher 4 means the student said not yet.
+// Those two are saved in the week file. They are not a request to answer.
 
 #pragma once
 
@@ -25,6 +32,20 @@ static const uint8_t CLEAR_KIND_OCR_TEXT_ACK = 10;
 static const uint8_t CLEAR_ANSWER_NONE = 0;
 static const uint8_t CLEAR_ANSWER_YES = 1;
 static const uint8_t CLEAR_ANSWER_NO = 2;
+// The teacher got the note, but this panel is not on the allowed list yet.
+static const uint8_t CLEAR_ANSWER_PENDING = 3;
+// The teacher will do this accommodation in a minute.
+static const uint8_t CLEAR_ANSWER_LATER = 4;
+// The teacher device has the request, and has not opened it yet.
+static const uint8_t CLEAR_ANSWER_GOT = 5;
+// The request is on the teacher screen.
+static const uint8_t CLEAR_ANSWER_SEEN = 6;
+// asksTeacher value for an accommodation request. 1 is any other ask.
+static const uint8_t CLEAR_ASK_AID = 2;
+// The student tapped Yes after a strategy. Not a teacher request.
+static const uint8_t CLEAR_ASK_HELPED = 3;
+// The student tapped Not yet after a strategy. Not a teacher request.
+static const uint8_t CLEAR_ASK_NOTYET = 4;
 static const char *CLEAR_BLE_NAME = "CLEAR Teacher";
 static const char *CLEAR_BLE_SERVICE_UUID = "4c4c0001-1400-4e45-8e00-000000000001";
 static const char *CLEAR_BLE_MESSAGE_UUID = "4c4c0002-1400-4e45-8e00-000000000001";

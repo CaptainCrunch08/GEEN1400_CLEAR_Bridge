@@ -67,6 +67,46 @@
     .card { background: var(--sky); border-radius: 18px; padding: 16px; }
     .card span { display: block; color: var(--muted); font-size: 0.9rem; }
     .card strong { display: block; margin-top: 6px; font-size: 1.45rem; line-height: 1.2; }
+    .overview {
+      background: #fff;
+      border: 1px solid #ece7e2;
+      border-radius: 18px;
+      box-shadow: 0 8px 28px #2430280a;
+      padding: 22px 26px 18px;
+    }
+    .overview-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+    .overview h2 { margin: 0; font-size: 1.35rem; letter-spacing: -0.02em; }
+    .overview .sub { margin: 4px 0 0; color: #8a847c; font-size: 0.95rem; }
+    .icon-button {
+      width: 36px; height: 36px; border-radius: 10px;
+      border: 0; background: transparent; color: #2a2a2a; cursor: pointer;
+    }
+    .icon-button:hover { background: #f4f1ec; }
+    .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 22px 0 8px; }
+    .metrics span { display: block; color: #8d887f; font-size: 0.92rem; }
+    .metrics strong { display: block; margin-top: 6px; font-size: 1.7rem; font-weight: 650; letter-spacing: -0.03em; }
+    .illustrative { margin: 10px 0 0; color: #b0aaa2; font-size: 0.92rem; }
+    .overview hr { border: 0; border-top: 1px solid #eeeae6; margin: 18px 0; }
+    .overview h3 { margin: 0 0 14px; font-size: 1.15rem; }
+    .kind-row { display: grid; grid-template-columns: 160px 1fr 36px; gap: 12px; align-items: center; margin: 12px 0; }
+    .kind-track { background: #f0eeeb; border-radius: 999px; height: 8px; overflow: hidden; }
+    .kind-fill { height: 8px; border-radius: 999px; }
+    .kind-fill.reg { background: #5eb8ad; }
+    .kind-fill.ask { background: #e2a15a; }
+    .effect-row { display: grid; grid-template-columns: 168px 1fr auto; gap: 12px; align-items: center; margin: 12px 0; }
+    .effect-track { display: flex; height: 8px; border-radius: 999px; overflow: hidden; background: #f0eeeb; }
+    .effect-yes { background: #5eb8ad; height: 8px; }
+    .effect-no { background: #d9d3cb; height: 8px; }
+    .effect-count { color: #8d887f; font-size: 0.9rem; white-space: nowrap; }
+    .review { display: flex; gap: 12px; align-items: flex-start; }
+    .bulb {
+      flex: 0 0 28px; width: 28px; height: 28px; border-radius: 50%;
+      border: 1.5px solid #d9d4ce; color: #8a847c;
+      display: grid; place-items: center;
+    }
+    .review strong { display: block; margin-bottom: 4px; }
+    .review p { margin: 0; color: #3a3a3a; }
+    .question { margin: 22px 0 0; color: var(--muted); font-size: 0.95rem; }
     .notes { margin: 8px 0 0; padding-left: 18px; }
     .notes li { margin: 6px 0; }
     .reflection { margin: 14px 0 0; padding-top: 12px; border-top: 1px solid var(--line); }
@@ -104,8 +144,54 @@
       border-radius: 999px; padding: 6px 12px; cursor: pointer;
     }
     .empty { color: var(--muted); }
+    .gate {
+      position: fixed; inset: 0; z-index: 5; overflow: auto;
+      background: #f3ecdf; padding: 28px 20px 72px;
+    }
+    .gate .sheet { max-width: 720px; margin: 0 auto; }
+    .codes { display: grid; gap: 12px; margin: 14px 0; }
+    .codes label { font-weight: 650; }
+    .codes input, .cover-pin {
+      display: block; width: 100%; margin-top: 6px;
+      font: inherit; padding: 12px 14px; border-radius: 12px;
+      border: 1px solid var(--line); background: white;
+    }
+    button.go, button.stop {
+      font: inherit; border: 0; border-radius: 999px;
+      padding: 12px 18px; font-weight: 650; cursor: pointer;
+    }
+    button.go { background: var(--green); color: white; }
+    button.stop { background: white; color: var(--ink); border: 1px solid var(--line); margin-left: 8px; }
+    .privacy-list { margin: 8px 0 0; padding-left: 18px; }
+    .privacy-list li { margin: 6px 0; }
+    header .tools { margin-left: auto; }
+    #names-cover { display: none; }
+    body.names-hidden #recent,
+    body.names-hidden #students,
+    body.names-hidden #student-view,
+    body.names-hidden #panel-settings,
+    body.names-hidden #drawing-panel { display: none; }
+    #panel-settings .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+    #panel-settings label { display: block; font-weight: 650; }
+    #panel-settings input, #panel-settings select {
+      display: block; width: 100%; margin-top: 6px; font: inherit;
+      padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: white;
+    }
+    #panel-settings .checks { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 8px 0; }
+    #panel-settings .checks label { font-weight: 500; }
+    #panel-form[hidden] { display: none; }
+    .student-picks { display: flex; flex-wrap: wrap; gap: 8px; }
+    .student-picks button.on { background: var(--green); color: white; border-color: var(--green); }
+    #student-pick {
+      display: block; width: 100%; max-width: 280px; margin-top: 6px;
+      font: inherit; padding: 10px 12px; border-radius: 12px;
+      border: 1px solid var(--line); background: white;
+    }
+    #student-detail h3 { margin: 18px 0 8px; font-size: 1.05rem; }
+    .week-note { color: var(--muted); }
+    body.names-hidden #names-cover { display: block; }
     @media (max-width: 720px) {
-      .chart-grid { grid-template-columns: 1fr; }
+      .chart-grid, .metrics, .kind-row, .effect-row { grid-template-columns: 1fr; }
       h1 { font-size: 1.8rem; }
     }
   </style>
@@ -118,11 +204,46 @@
         <p class="kicker">Classroom check-in</p>
         <h1>CLEAR</h1>
       </div>
+      <div class="tools">
+        <button type="button" class="quiet" id="lock-page">Lock</button>
+      </div>
     </header>
 
+    <section class="gate" id="gate">
+      <div class="sheet">
+        <p class="kicker">Privacy notice</p>
+        <h1>Before any student records</h1>
+        <p>CLEAR keeps a first name, a feeling, the choice a student tapped, the time, and the teacher’s yes or no. It does not ask for an address, phone number, photo, or student ID. The week stays in this browser. It is not sent to a company server.</p>
+        <p>These notes are school records. FERPA expects the school to keep them for the classroom and to let a parent look at a child’s records and ask for a correction or deletion. COPPA’s school rule fits this page: it is used for the class, not as a public site for children, and a parent can refuse by asking the teacher not to keep that child’s panel or this browser’s copy.</p>
+        <ul class="privacy-list">
+          <li>The teacher device asks for a class PIN, then a teacher code, before it shows messages or turns on the USB drive.</li>
+          <li>CLEAR.CSV from the updated teacher device is locked with the class PIN. The website asks for both codes before it opens a week.</li>
+          <li>A student panel must use that class PIN. The teacher then allows that panel. Other panels stay on a waiting list, and their messages are not saved.</li>
+          <li>Names and messages on this page hide after 10 seconds with no mouse or keyboard activity. The graphs that do not name a student stay up.</li>
+          <li>Student panel settings go from this browser straight to that panel over USB or Bluetooth. They are not sent to a server. The settings password is not saved here.</li>
+          <li>Removing a week, or choosing “Delete saved weeks,” takes the copy out of this browser. Deleting CLEAR.CSV on the teacher drive clears that device’s week.</li>
+        </ul>
+        <form class="codes" id="gate-form">
+          <label>Class PIN
+            <input id="gate-pin" inputmode="numeric" autocomplete="off" maxlength="4" pattern="[0-9]{4}" required>
+          </label>
+          <label>Teacher code
+            <input id="gate-code" inputmode="numeric" autocomplete="off" maxlength="4" pattern="[0-9]{4}" required>
+          </label>
+          <p id="gate-help">Use the same four-digit class PIN and teacher code you set on the teacher device. The first visit on this browser saves a check for those codes. It does not save the codes themselves.</p>
+          <p id="gate-message" class="message"></p>
+          <div>
+            <button class="go" type="submit" id="gate-submit">Continue</button>
+            <button class="stop" type="button" id="gate-delete">Delete saved weeks</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <section class="panel overview" id="summary"></section>
     <section class="drop" id="drop">
       <h2>Add a week from the teacher device</h2>
-      <p>Sample weeks are already on this page, so the graphs can be shown before a device is plugged in. When you have a real week, choose <strong>CLEAR.CSV</strong>. It is added beside the samples, and it stays in this browser.</p>
+      <p>Sample weeks are already on this page, so the graphs can be shown before a device is plugged in. When you have a real week, choose <strong>CLEAR.CSV</strong>. A file from the updated teacher device is locked with the class PIN. It is added beside the samples, and it stays in this browser in locked form.</p>
       <label class="pick">Choose CLEAR.CSV
         <input id="file" type="file" accept=".csv,text/csv">
       </label>
@@ -134,17 +255,89 @@
       <p id="message" class="message"></p>
     </section>
 
-    <section class="panel" id="summary"></section>
+    <p class="question">How often did students use it through the week?</p>
     <section class="panel" id="days"></section>
     <div class="chart-grid">
       <section class="panel" id="hours"></section>
       <section class="panel" id="kinds"></section>
     </div>
+    <p class="question">Which strategies did students say helped?</p>
+    <section class="panel" id="effect"></section>
+    <p class="question">What should a teacher look at next?</p>
     <div class="chart-grid">
       <section class="panel" id="feelings"></section>
       <section class="panel" id="students"></section>
     </div>
+    <section class="panel" id="student-view">
+      <h2>One student</h2>
+      <label class="field-label" for="student-pick">Student</label>
+      <select id="student-pick"></select>
+      <div id="student-detail"></div>
+    </section>
+    <section class="panel" id="names-cover">
+      <h2>Names are hidden</h2>
+      <p>Ten seconds passed with no activity. Enter the class PIN to show names, messages, and drawings again.</p>
+      <label class="field-label" for="cover-pin">Class PIN</label>
+      <input class="cover-pin" id="cover-pin" inputmode="numeric" autocomplete="off" maxlength="4">
+      <p id="cover-message" class="message"></p>
+      <button type="button" class="go" id="cover-show">Show names</button>
+    </section>
     <section class="panel" id="recent"></section>
+    <section class="panel" id="panel-settings">
+      <h2>Student panel</h2>
+      <p>Change the settings stored on one student panel. Connect with USB-C or Bluetooth. Use the settings password from that panel. It is not the class PIN. Open this page from a local address so the browser can reach USB and Bluetooth.</p>
+      <div class="grid">
+        <label>Settings password
+          <input id="panel-pass" inputmode="numeric" autocomplete="off" maxlength="4">
+        </label>
+      </div>
+      <p>
+        <button type="button" class="go" id="panel-usb">Connect USB</button>
+        <button type="button" class="stop" id="panel-ble">Connect Bluetooth</button>
+      </p>
+      <p id="panel-status" class="message"></p>
+      <div id="panel-form" hidden>
+        <div class="grid">
+          <label>Student name <input id="panel-name" maxlength="16"></label>
+          <label>Teacher name <input id="panel-teacher" maxlength="16"></label>
+          <label>Brightness
+            <input id="panel-bright" type="number" min="20" max="100" step="10">
+          </label>
+          <label>Age group
+            <select id="panel-grade">
+              <option value="0">K</option>
+              <option value="1">1 - 2</option>
+              <option value="2">3 - 4</option>
+              <option value="3">5</option>
+            </select>
+          </label>
+        </div>
+        <div class="checks">
+          <label><input type="checkbox" id="panel-dark"> Dark</label>
+          <label><input type="checkbox" id="panel-bridger"> Bridger</label>
+          <label><input type="checkbox" id="panel-express"> Draw or write</label>
+          <label><input type="checkbox" id="panel-calm"> Calm screen</label>
+        </div>
+        <p class="field-label">Tools</p>
+        <div class="checks" id="panel-tools"></div>
+        <p class="field-label">Accommodations</p>
+        <div class="checks" id="panel-acc"></div>
+        <p class="field-label">Strategy order</p>
+        <div class="grid" id="panel-order"></div>
+        <div class="grid">
+          <label>First <input id="panel-first" maxlength="16"></label>
+          <label>Then <input id="panel-then" maxlength="16"></label>
+          <label>Schedule 1 <input id="panel-sch0" maxlength="16"></label>
+          <label>Schedule 2 <input id="panel-sch1" maxlength="16"></label>
+          <label>Schedule 3 <input id="panel-sch2" maxlength="16"></label>
+          <label>Schedule 4 <input id="panel-sch3" maxlength="16"></label>
+          <label>New settings password
+            <input id="panel-newpass" inputmode="numeric" autocomplete="off" maxlength="4">
+          </label>
+        </div>
+        <p><button type="button" class="go" id="panel-send">Send to panel</button></p>
+      </div>
+    </section>
     <section class="panel" id="drawing-panel">
       <h2>Student drawings</h2>
       <p class="empty">Imported drawings stay with their week in this browser.</p>
@@ -161,13 +354,85 @@
   <script>
     var STORAGE_KEY = "clear-weeks";
     var HIDE_KEY = "clear-hidden-examples";
+    var SECRET_KEY = "clear-secrets";
+    var KDF_ROUNDS = 4096;
+    var sessionPin = "";
+    var memoryWeeks = [];
+    var namesHidden = false;
+    var idleTimer = 0;
+    var textEncoder = new TextEncoder();
+    var textDecoder = new TextDecoder();
+
+    function bytesToB64(bytes) {
+      var bin = "";
+      var view = new Uint8Array(bytes);
+      for (var i = 0; i < view.length; i++) bin += String.fromCharCode(view[i]);
+      return btoa(bin);
+    }
+
+    function b64ToBytes(text) {
+      var bin = atob(String(text).trim());
+      var out = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+      return out;
+    }
+
+    async function deriveAes(pin, salt) {
+      var base = await crypto.subtle.importKey(
+        "raw", textEncoder.encode(pin), "PBKDF2", false, ["deriveKey"]);
+      return crypto.subtle.deriveKey(
+        { name: "PBKDF2", salt: salt, iterations: KDF_ROUNDS, hash: "SHA-256" },
+        base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+    }
+
+    async function pinCheck(pin, salt) {
+      var base = await crypto.subtle.importKey(
+        "raw", textEncoder.encode(pin), "PBKDF2", false, ["deriveBits"]);
+      var bits = await crypto.subtle.deriveBits(
+        { name: "PBKDF2", salt: salt, iterations: KDF_ROUNDS, hash: "SHA-256" },
+        base, 256);
+      return bytesToB64(bits);
+    }
+
+    async function sealText(pin, plain) {
+      var salt = crypto.getRandomValues(new Uint8Array(16));
+      var iv = crypto.getRandomValues(new Uint8Array(12));
+      var key = await deriveAes(pin, salt);
+      var cipher = new Uint8Array(await crypto.subtle.encrypt(
+        { name: "AES-GCM", iv: iv }, key, textEncoder.encode(plain)));
+      return "CLEARENC1\n" + bytesToB64(salt) + "\n" + bytesToB64(iv) + "\n" + bytesToB64(cipher) + "\n";
+    }
+
+    async function openSeal(pin, sealed) {
+      var lines = String(sealed).replace(/^\uFEFF/, "").split(/\r?\n/).map(function (line) {
+        return line.trim();
+      }).filter(function (line) { return line.length > 0; });
+      if (lines[0] !== "CLEARENC1" || lines.length < 4) {
+        throw new Error("This file is not a locked CLEAR week.");
+      }
+      var key = await deriveAes(pin, b64ToBytes(lines[1]));
+      var plain = await crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: b64ToBytes(lines[2]) }, key, b64ToBytes(lines[3]));
+      return textDecoder.decode(plain);
+    }
+
+    function readSecrets() {
+      try {
+        var saved = JSON.parse(localStorage.getItem(SECRET_KEY) || "null");
+        if (!saved || !saved.salt || !saved.pin || !saved.code) return null;
+        return saved;
+      } catch (err) {
+        return null;
+      }
+    }
     var pendingDrawings = [];
     var drawingReadPromise = Promise.resolve();
     var drawingsReady = true;
     var drawingObjectUrls = [];
 
     // One sample class, four finished school weeks. day is Mon=0 … Fri=4.
-    // Feelings and choices match the student panel. kind is ask or try.
+    // Feelings and choices match the student panel.
+    // kind is ask, try, helped (the student tapped Yes), or notyet.
     // The last number, when present, is how many minutes the reply took.
     var SAMPLE_WEEKS = [
       [
@@ -178,7 +443,10 @@
         ["Maya", "I don't get it", "Draw the problem", "try", "", 2, 9, 5],
         ["Avery", "Mad", "Help me cool down", "try", "", 2, 13, 10],
         ["Jordan", "I don't get it", "Please say that again", "ask", "yes", 3, 9, 25, 6],
-        ["Luis", "Worried", "Breathing", "try", "", 4, 10, 10]
+        ["Luis", "Worried", "Breathing", "try", "", 4, 10, 10],
+        ["Avery", "Mad", "Help me cool down", "helped", "", 2, 13, 12],
+        ["Luis", "Worried", "Breathing", "helped", "", 4, 10, 14],
+        ["Maya", "I don't get it", "Draw the problem", "notyet", "", 2, 9, 8]
       ],
       [
         ["Maya", "I don't get it", "Explain this question", "ask", "yes", 0, 8, 20, 3],
@@ -192,7 +460,10 @@
         ["Jordan", "Mad", "Breathing", "try", "", 4, 11, 45],
         ["Luis", "Bored", "Draw how I feel", "try", "", 4, 13, 40],
         ["Sam", "I don't get it", "Can we practice one?", "ask", "yes", 4, 14, 15, 6],
-        ["Connor", "Mad", "Help me cool down", "try", "", 4, 14, 50]
+        ["Connor", "Mad", "Help me cool down", "try", "", 4, 14, 50],
+        ["Jordan", "Mad", "Breathing", "helped", "", 4, 11, 48],
+        ["Sam", "Worried", "Help me calm down", "helped", "", 1, 10, 8],
+        ["Connor", "Mad", "Help me cool down", "notyet", "", 4, 14, 52]
       ],
       [
         ["Avery", "Worried", "Talk to someone", "ask", "yes", 0, 8, 25, 5],
@@ -203,7 +474,10 @@
         ["Jordan", "Bored", "Quiet looking game", "try", "", 3, 9, 50],
         ["Avery", "Uncomfortable", "Can I see an example?", "ask", "no", 3, 13, 20, 9],
         ["Luis", "Worried", "Help me calm down", "try", "", 4, 10, 15],
-        ["Maya", "Bored", "Draw how I feel", "try", "", 4, 14, 0]
+        ["Maya", "Bored", "Draw how I feel", "try", "", 4, 14, 0],
+        ["Sam", "Mad", "Help me cool down", "helped", "", 1, 14, 38],
+        ["Luis", "Worried", "Help me calm down", "helped", "", 4, 10, 18],
+        ["Connor", "I don't get it", "Draw the problem", "notyet", "", 2, 10, 48]
       ],
       [
         ["Avery", "Worried", "Help me calm down", "try", "", 0, 8, 10],
@@ -221,11 +495,15 @@
         ["Connor", "Bored", "Quiet looking game", "try", "", 4, 13, 35],
         ["Avery", "Uncomfortable", "Please help me", "ask", "yes", 4, 14, 5, 9],
         ["Sam", "Mad", "I need a walk", "ask", "no", 4, 14, 30, 22],
-        ["Jordan", "Bored", "Draw how I feel", "try", "", 4, 15, 20]
+        ["Jordan", "Bored", "Draw how I feel", "try", "", 4, 15, 20],
+        ["Avery", "Worried", "Breathing", "helped", "", 0, 10, 28],
+        ["Maya", "I don't get it", "Draw the problem", "helped", "", 3, 15, 4],
+        ["Sam", "Worried", "Breathing", "notyet", "", 1, 8, 34],
+        ["Jordan", "Bored", "Draw how I feel", "notyet", "", 4, 15, 24]
       ]
     ];
 
-    function loadWeeks() {
+    function readStoredWeeks() {
       try {
         var saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
         return Array.isArray(saved) ? saved : [];
@@ -234,8 +512,47 @@
       }
     }
 
-    function storeWeeks(weeks) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(weeks));
+    async function storeWeeks(weeks) {
+      var kept = [];
+      for (var i = 0; i < weeks.length; i++) {
+        var week = weeks[i];
+        if (week.example) continue;
+        kept.push({
+          id: week.id,
+          name: week.name,
+          savedAt: week.savedAt,
+          sealed: await sealText(sessionPin, JSON.stringify({
+            rows: week.rows,
+            drawings: week.drawings || []
+          }))
+        });
+      }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(kept));
+      memoryWeeks = weeks.filter(function (week) { return !week.example; });
+    }
+
+    async function openStoredWeeks() {
+      var saved = readStoredWeeks();
+      var opened = [];
+      var legacy = false;
+      for (var i = 0; i < saved.length; i++) {
+        var week = saved[i];
+        if (week && week.sealed) {
+          var body = JSON.parse(await openSeal(sessionPin, week.sealed));
+          opened.push({
+            id: week.id,
+            name: week.name,
+            savedAt: week.savedAt,
+            rows: body.rows || [],
+            drawings: body.drawings || []
+          });
+        } else if (week && week.rows) {
+          legacy = true;
+          opened.push(week);
+        }
+      }
+      memoryWeeks = opened;
+      if (legacy) await storeWeeks(opened);
     }
 
     function hiddenExampleIds() {
@@ -315,7 +632,7 @@
 
     function weeksToShow() {
       var hidden = hiddenExampleIds();
-      var weeks = loadWeeks().slice();
+      var weeks = memoryWeeks.slice();
       exampleWeeks().forEach(function (week) {
         if (hidden.indexOf(week.id) >= 0) return;
         var already = weeks.some(function (saved) { return saved.id === week.id; });
@@ -518,11 +835,12 @@
       var byId = {};
       var order = [];
       rows.forEach(function (row, index) {
-        var id = row.id || ("row-" + index);
+        var rawId = row.id || ("row-" + index);
+        var id = rawId + "\n" + (row.student || "");
         var prev = byId[id];
         if (!prev) {
           byId[id] = {
-            id: id,
+            id: rawId,
             time_sent: row.time_sent || "",
             student: row.student || "",
             feeling: row.feeling || "",
@@ -595,7 +913,7 @@
     // a school day is left out so one bad stamp cannot skew the typical time.
     function replyMinutes(event) {
       if (event.kind !== "ask") return null;
-      if (event.teacher_response !== "yes" && event.teacher_response !== "no") return null;
+      if (event.teacher_response !== "yes" && event.teacher_response !== "no" && event.teacher_response !== "minute") return null;
       var sent = Number(event.time_sent);
       var answered = Number(event.time_answered);
       if (!sent || !answered || answered < sent) return null;
@@ -621,6 +939,14 @@
       return median(values);
     }
 
+    function shortReply(minutes) {
+      if (minutes == null) return "—";
+      var rounded = Math.round(minutes);
+      if (rounded < 1) return "<1m";
+      if (rounded < 60) return rounded + "m";
+      return formatMinutes(minutes);
+    }
+
     function formatMinutes(minutes) {
       var rounded = Math.round(minutes);
       if (rounded < 1) return "under 1 min";
@@ -631,37 +957,117 @@
       return hours + " hr " + rest + " min";
     }
 
+    function isFeedback(event) {
+      return event.kind === "helped" || event.kind === "notyet";
+    }
+
+    function effectBars(list) {
+      var names = {};
+      list.forEach(function (event) {
+        var key = event.choice || "Strategy";
+        if (!names[key]) names[key] = { label: key, helped: 0, notyet: 0 };
+        if (event.kind === "helped") names[key].helped++;
+        else names[key].notyet++;
+      });
+      var items = Object.keys(names).map(function (key) { return names[key]; });
+      items.sort(function (a, b) { return (b.helped + b.notyet) - (a.helped + a.notyet); });
+      if (!items.length) return "<p class='empty'>No Yes or Not yet answers are in these weeks yet.</p>";
+      return items.map(function (item) {
+        var total = Math.max(1, item.helped + item.notyet);
+        var yesW = Math.round(item.helped * 100 / total);
+        var noW = Math.round(item.notyet * 100 / total);
+        return "<div class='effect-row'><span>" + escapeHtml(item.label) + "</span><div class='effect-track'><div class='effect-yes' style='width:" + yesW + "%'></div><div class='effect-no' style='width:" + noW + "%'></div></div><span class='effect-count'>" + item.helped + " yes · " + item.notyet + " not yet</span></div>";
+      }).join("") + "<p class='week-note'>Yes means the student said it helped. Not yet means they wanted a different strategy. Try again is not counted, and a higher Yes count is not a grade.</p>";
+    }
+
     function replyPhrase(event) {
-      if (event.teacher_response !== "yes" && event.teacher_response !== "no") return "";
+      if (event.teacher_response === "pending") return "Pending";
+      if (event.teacher_response === "seen") return "Seen";
+      if (event.teacher_response !== "yes" && event.teacher_response !== "no" && event.teacher_response !== "minute") return "";
       var minutes = replyMinutes(event);
-      if (minutes == null) return event.teacher_response;
-      return event.teacher_response + " · " + formatMinutes(minutes);
+      var word = event.teacher_response === "minute" ? "in a minute" : event.teacher_response;
+      if (minutes == null) return word;
+      return word + " · " + formatMinutes(minutes);
     }
 
-    // A short after-class read of the class totals. It never names a student.
-    function afterClassNote(feelings, busiestPart, typical, latestTypical, previousTypical) {
-      var parts = [];
-      if (feelings[0]) parts.push(feelings[0].label + " is the pattern worth noticing across these weeks.");
-      if (busiestPart) parts.push("Check-ins gathered in " + busiestPart + ", a useful time to have a calm reply ready.");
-      if (typical != null) {
-        parts.push("When a student asked, a typical reply took " + formatMinutes(typical) + ".");
-        if (latestTypical != null && previousTypical != null && latestTypical > previousTypical + 0.5) {
-          parts.push("The newest week was slower to answer than the week before it.");
-        } else if (latestTypical != null && previousTypical != null && previousTypical > latestTypical + 0.5) {
-          parts.push("The newest week was quicker to answer than the week before it.");
-        }
+    var lastBrief = "";
+    var selectedStudent = "";
+    var scrollStudent = false;
+
+    function renderStudentView(weeks, events, feedback) {
+      var panel = document.getElementById("student-detail");
+      var pick = document.getElementById("student-pick");
+      var names = countBy(events, function (event) { return event.student; }).map(function (item) {
+        return item.label;
+      }).filter(function (name) { return name && name !== "Unknown"; });
+      if (names.indexOf(selectedStudent) < 0) selectedStudent = names[0] || "";
+      pick.innerHTML = "";
+      names.forEach(function (name) {
+        var option = document.createElement("option");
+        option.value = name;
+        option.textContent = name;
+        if (name === selectedStudent) option.selected = true;
+        pick.appendChild(option);
+      });
+      if (!selectedStudent) {
+        panel.innerHTML = "<p class='empty'>Names appear here after a week is on the page.</p>";
+        return;
       }
-      if (!parts.length) return "";
-      parts.push("This note is written on this computer from class totals. It does not name a student, and it is not sent anywhere.");
-      return parts.join(" ");
+      var mine = events.filter(function (event) { return event.student === selectedStudent; });
+      var tries = mine.filter(function (event) { return event.kind === "try"; });
+      var asks = mine.filter(function (event) { return event.kind === "ask"; });
+      var mineFeedback = (feedback || []).filter(function (event) { return event.student === selectedStudent; });
+      var table = "<table><thead><tr><th>Week</th><th>Interactions</th><th>Requests</th><th>Median reply</th></tr></thead><tbody>";
+      weeks.forEach(function (week) {
+        var rowsIn = eventsIn(week.rows).filter(function (event) {
+          return event.student === selectedStudent && !isFeedback(event);
+        });
+        var weekAsks = rowsIn.filter(function (event) { return event.kind === "ask"; });
+        table += "<tr><td>" + escapeHtml(week.name) + "</td><td>" + rowsIn.length + "</td><td>" + weekAsks.length + "</td><td>" + escapeHtml(shortReply(replyMinutesFor(rowsIn))) + "</td></tr>";
+      });
+      table += "</tbody></table>";
+      var answered = asks.filter(function (event) {
+        return event.teacher_response === "yes" || event.teacher_response === "no" || event.teacher_response === "minute";
+      }).length;
+      panel.innerHTML =
+        "<h3>Week by week</h3>" + table +
+        "<p class='week-note'>These are counts. More requests can mean the student is asking for help more clearly.</p>" +
+        "<h3>Strategies used most</h3>" +
+        bars(countBy(tries, function (event) { return event.choice || "Strategy"; }).slice(0, 6), false) +
+        "<h3>What they said about strategies</h3>" + effectBars(mineFeedback) +
+        "<h3>Accommodation requests</h3>" +
+        bars(countBy(asks, function (event) { return event.choice || "Request"; }).slice(0, 6), true) +
+        "<p class='week-note'>" +
+        asks.filter(function (event) { return event.teacher_response === "pending"; }).length + " pending, " +
+        asks.filter(function (event) { return event.teacher_response === "seen"; }).length + " seen, " +
+        answered + " answered. Median reply " + escapeHtml(shortReply(replyMinutesFor(asks))) + ".</p>";
+      if (scrollStudent) {
+        scrollStudent = false;
+        document.getElementById("student-view").scrollIntoView({ block: "nearest" });
+      }
     }
 
-    function partOfDay(date) {
-      var hour = date.getHours();
-      if (hour < 11) return "the morning";
-      if (hour < 13) return "the middle of the day";
-      if (hour < 16) return "the afternoon";
-      return "late in the day";
+    function reviewNote(latest, previous, latestTypical, previousTypical) {
+      var latestAsks = latest.filter(function (event) { return event.kind === "ask"; });
+      var previousAsks = previous.filter(function (event) { return event.kind === "ask"; });
+      var top = countBy(latestAsks, function (event) { return event.choice; })[0];
+      var before = 0;
+      if (top) previousAsks.forEach(function (event) { if (event.choice === top.label) before++; });
+      if (top && previous.length && top.count > before) {
+        var lead = /^i need /i.test(top.label)
+          ? top.label + " came up more often than the previous week."
+          : top.label + " requests increased compared with the previous week.";
+        return lead + " Consider reviewing classroom transitions and activity demands.";
+      }
+      if (latestTypical != null && previousTypical != null && latestTypical > previousTypical + 0.5) {
+        return "Replies took longer than the previous week. A short plan for the most common request will shorten the wait.";
+      }
+      if (top && previous.length && top.count < before) {
+        return top.label + " requests eased compared with the previous week. Check that this support is still easy to reach.";
+      }
+      if (top) return top.label + " was requested most often. A short plan for that ask will make the next reply easier.";
+      if (latest.length) return "Most of this week stayed on the panel. Look at the time of day before changing the room.";
+      return "Import a week to see which supports are worth a closer look.";
     }
 
     function bars(items, ask) {
@@ -691,7 +1097,9 @@
         var text = String(reader.result || "");
         drawingReadPromise.then(function () {
           if (!drawingsReady) return;
-          importWeekText(file, text);
+          importWeekText(file, text).catch(function () {
+            setMessage("This browser could not open that week.", true);
+          });
         });
       };
       reader.onerror = function () {
@@ -700,13 +1108,22 @@
       reader.readAsText(file);
     }
 
-    function importWeekText(file, text) {
-      var first = text.replace(/^\uFEFF/, "").split(/\r?\n/)[0].toLowerCase();
+    async function importWeekText(file, text) {
+      var source = String(text || "");
+      if (source.replace(/^\uFEFF/, "").trim().indexOf("CLEARENC1") === 0) {
+        try {
+          source = await openSeal(sessionPin, source);
+        } catch (err) {
+          setMessage("The class PIN did not open this week. Use the PIN from the teacher device.", true);
+          return;
+        }
+      }
+      var first = source.replace(/^\uFEFF/, "").split(/\r?\n/)[0].toLowerCase();
       if (first.indexOf("student") < 0 || first.indexOf("feeling") < 0) {
         setMessage("This file does not look like a CLEAR week. Choose CLEAR.CSV from the teacher device.", true);
         return;
       }
-      var rows = parseCsv(text);
+      var rows = parseCsv(source);
       var events = eventsIn(rows);
       var times = datedEvents(events).map(function (item) { return item.when; }).sort(function (a, b) { return a - b; });
       var id = file.name;
@@ -715,7 +1132,7 @@
         id = dayKey(times[0]) + "_" + dayKey(times[times.length - 1]);
         name = rangeLabel(times[0], times[times.length - 1]);
       }
-      var savedWeeks = loadWeeks();
+      var savedWeeks = memoryWeeks.slice();
       var existing = savedWeeks.filter(function (week) { return week.id === id; })[0];
       var weeks = savedWeeks.filter(function (week) { return week.id !== id; });
       weeks.push({
@@ -729,7 +1146,7 @@
       });
       weeks.sort(function (a, b) { return weekSortKey(a).localeCompare(weekSortKey(b)); });
       try {
-        storeWeeks(weeks);
+        await storeWeeks(weeks);
       } catch (err) {
         setMessage("This browser could not keep the week and drawings. Remove older weeks or drawings and try again.", true);
         return;
@@ -777,14 +1194,14 @@
 
     function render() {
       var weeks = weeksToShow();
-      var events = allEvents(weeks);
-      var latest = weeks.length ? eventsIn(weeks[weeks.length - 1].rows) : [];
-      var previous = weeks.length > 1 ? eventsIn(weeks[weeks.length - 2].rows) : [];
+      var everything = allEvents(weeks);
+      var feedbackEvents = everything.filter(isFeedback);
+      var events = everything.filter(function (event) { return !isFeedback(event); });
+      var latest = weeks.length ? eventsIn(weeks[weeks.length - 1].rows).filter(function (event) { return !isFeedback(event); }) : [];
+      var previous = weeks.length > 1 ? eventsIn(weeks[weeks.length - 2].rows).filter(function (event) { return !isFeedback(event); }) : [];
       var feelings = countBy(events, function (event) { return event.feeling; });
       var students = countBy(events, function (event) { return event.student; });
       var asks = events.filter(function (event) { return event.kind === "ask"; });
-      var tries = events.filter(function (event) { return event.kind === "try"; });
-      var typical = replyMinutesFor(events);
       var latestTypical = replyMinutesFor(latest);
       var previousTypical = replyMinutesFor(previous);
       var dated = datedEvents(events);
@@ -806,66 +1223,68 @@
         var label = (slot.hour % 12 || 12) + (slot.hour < 12 ? "a" : "p");
         return { label: label, count: slot.count };
       });
-      var partCounts = {};
-      datedEvents(events).forEach(function (item) {
-        var name = partOfDay(item.when);
-        partCounts[name] = (partCounts[name] || 0) + 1;
-      });
-      var busiestPart = Object.keys(partCounts).sort(function (a, b) { return partCounts[b] - partCounts[a]; })[0];
-
-      var notes = [];
       var onlyExamples = weeks.length > 0 && weeks.every(function (week) { return week.example; });
-      if (!events.length) {
-        notes.push(hiddenExampleIds().length ? "The sample weeks are hidden. Show them again to walk through the graphs." : "Choose a week file and this page will describe what students needed.");
-      } else {
-        if (onlyExamples) notes.push("These are sample weeks, so the graphs can be shown before a teacher device is plugged in.");
-        notes.push(events.length + (events.length === 1 ? " selection is saved" : " selections are saved") + " across " + weeks.length + (weeks.length === 1 ? " week." : " weeks."));
-        if (feelings[0]) notes.push(feelings[0].label + " came up most often, " + feelings[0].count + (feelings[0].count === 1 ? " time." : " times."));
-        if (busiestPart) notes.push("Most of those moments were in " + busiestPart + ".");
-        if (typical != null) {
-          notes.push("A typical reply took " + formatMinutes(typical) + ".");
-          if (previous.length && latestTypical != null && previousTypical != null) {
-            if (latestTypical > previousTypical + 0.5) notes.push("Replies in the newest week took longer than the week before.");
-            else if (previousTypical > latestTypical + 0.5) notes.push("Replies in the newest week were quicker than the week before.");
-          }
-        }
-        if (previous.length) {
-          if (latest.length > previous.length) notes.push("The newest week had more selections than the week before it.");
-          else if (latest.length < previous.length) notes.push("The newest week had fewer selections than the week before it.");
-          else notes.push("The newest week had the same number of selections as the week before it.");
-          var latestTop = countBy(latest, function (event) { return event.feeling; })[0];
-          var previousCount = 0;
-          if (latestTop) {
-            previous.forEach(function (event) { if (event.feeling === latestTop.label) previousCount++; });
-            if (latestTop.count > previousCount) notes.push(latestTop.label + " showed up more often than in the week before.");
-            else if (latestTop.count < previousCount) notes.push(latestTop.label + " showed up less often than in the week before.");
-          }
-        }
-      }
 
+      var weekEvents = latest.length ? latest : events;
+      var weekAsks = weekEvents.filter(function (event) { return event.kind === "ask"; });
+      var weekTries = weekEvents.filter(function (event) { return event.kind !== "ask"; });
+      var weekTypical = replyMinutesFor(weekEvents);
+      var kindMax = Math.max(weekTries.length, weekAsks.length, 1);
+      var regWidth = Math.round(weekTries.length * 100 / kindMax);
+      var askWidth = Math.round(weekAsks.length * 100 / kindMax);
+      var review = reviewNote(latest, previous, latestTypical, previousTypical);
+      var reviewTitle = onlyExamples ? "Example observation" : "This week";
+      var weekName = weeks.length ? weeks[weeks.length - 1].name : "No week yet";
+      lastBrief = [
+        "CLEAR Bridge",
+        weekName,
+        "Interactions: " + weekEvents.length,
+        "Requests: " + weekAsks.length,
+        "Median reply: " + shortReply(weekTypical),
+        "Self-regulation: " + weekTries.length,
+        "Teacher requests: " + weekAsks.length,
+        reviewTitle + ": " + review
+      ].join("\n");
       document.getElementById("summary").innerHTML =
-        "<h2>What stands out</h2><div class='cards'>" +
-        "<div class='card'><span>Selections</span><strong>" + events.length + "</strong></div>" +
-        "<div class='card'><span>Students</span><strong>" + students.length + "</strong></div>" +
-        "<div class='card'><span>Most common feeling</span><strong>" + escapeHtml(feelings[0] ? feelings[0].label : "—") + "</strong></div>" +
-        "<div class='card'><span>Typical reply</span><strong>" + (typical == null ? "—" : escapeHtml(formatMinutes(typical))) + "</strong></div>" +
-        "</div><ul class='notes'>" + notes.map(function (line) { return "<li>" + escapeHtml(line) + "</li>"; }).join("") + "</ul>" +
-        (events.length ? "<p class='reflection'>" + escapeHtml(afterClassNote(feelings, busiestPart, typical, latestTypical, previousTypical)) + "</p>" : "");
+        "<div class='overview-head'><div><h2>CLEAR Bridge</h2><p class='sub'>Weekly Classroom Overview</p></div>" +
+        "<button type='button' class='icon-button' id='overview-download' aria-label='Download this overview'>" +
+        "<svg width='22' height='22' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.7' aria-hidden='true'><path d='M12 4v10'/><path d='M8 10l4 4 4-4'/><path d='M5 19h14'/></svg></button></div>" +
+        "<div class='metrics'><div><span>Interactions</span><strong>" + weekEvents.length + "</strong></div>" +
+        "<div><span>Requests</span><strong>" + weekAsks.length + "</strong></div>" +
+        "<div><span>Median reply</span><strong>" + escapeHtml(shortReply(weekTypical)) + "</strong></div></div>" +
+        (onlyExamples ? "<p class='illustrative'>Illustrative data only</p>" : "<p class='illustrative'>" + escapeHtml(weekName) + "</p>") +
+        "<hr><h3>Interaction breakdown</h3>" +
+        "<div class='kind-row'><span>Self-regulation</span><div class='kind-track'><div class='kind-fill reg' style='width:" + regWidth + "%'></div></div><span>" + weekTries.length + "</span></div>" +
+        "<div class='kind-row'><span>Teacher requests</span><div class='kind-track'><div class='kind-fill ask' style='width:" + askWidth + "%'></div></div><span>" + weekAsks.length + "</span></div>" +
+        "<hr><h3>Areas worth reviewing</h3><div class='review'><div class='bulb' aria-hidden='true'>" +
+        "<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.7'><path d='M9 18h6'/><path d='M10 21h4'/><path d='M8 14a5 5 0 1 1 8 0c-.8.8-1.5 1.6-1.7 2.5H9.7C9.5 15.6 8.8 14.8 8 14z'/></svg></div>" +
+        "<div><strong>" + escapeHtml(reviewTitle) + "</strong><p>" + escapeHtml(review) + "</p></div></div>";
 
-      document.getElementById("days").innerHTML = "<h2>Across the days</h2>" + columns(dayItems);
+      document.getElementById("days").innerHTML = "<h2>Use across the days</h2>" + columns(dayItems);
       document.getElementById("hours").innerHTML = "<h2>Time of day</h2>" + columns(hourItems);
-      document.getElementById("feelings").innerHTML = "<h2>How students felt</h2>" + bars(feelings.slice(0, 6), false);
-      var kindTotal = Math.max(1, asks.length + tries.length);
+      document.getElementById("effect").innerHTML =
+        "<h2>Did it help?</h2>" +
+        "<p class='week-note'>Across the weeks on this page. Teal is Yes. Gray is Not yet.</p>" +
+        effectBars(feedbackEvents);
+      document.getElementById("feelings").innerHTML = "<h2>Feelings to watch</h2>" + bars(feelings.slice(0, 6), false);
       document.getElementById("kinds").innerHTML =
-        "<h2>Tried it or asked</h2>" +
-        "<div class='split'><span style='width:" + Math.round(tries.length * 100 / kindTotal) + "%;background:var(--green)'></span><span style='width:" + Math.round(asks.length * 100 / kindTotal) + "%;background:var(--orange)'></span></div>" +
-        "<div class='legend'><span><i class='dot' style='background:var(--green)'></i>Try this " + tries.length + "</span><span><i class='dot' style='background:var(--orange)'></i>Ask " + asks.length + "</span></div>" +
+        "<h2>What kinds of support?</h2>" +
+        bars(countBy(asks, function (event) { return event.choice || "Request"; }).slice(0, 6), true) +
+        "<p class='empty'>" + asks.filter(function (event) { return event.teacher_response === "pending"; }).length + " pending, " +
+        asks.filter(function (event) { return event.teacher_response === "seen"; }).length + " seen, " +
+        asks.filter(function (event) {
+          return event.teacher_response === "yes" || event.teacher_response === "no" || event.teacher_response === "minute";
+        }).length + " answered</p>" +
         bars(countBy(asks, function (event) {
           if (event.teacher_response === "yes") return "Yes";
           if (event.teacher_response === "no") return "No";
+          if (event.teacher_response === "minute") return "In a minute";
+          if (event.teacher_response === "seen") return "Seen";
+          if (event.teacher_response === "pending") return "Pending";
           return "No reply";
         }), true);
-      document.getElementById("students").innerHTML = "<h2>Who needed support</h2>" + bars(students.slice(0, 8), false);
+      var studentBox = document.getElementById("students");
+      studentBox.innerHTML = "<h2>Choose a student</h2>";
 
       var recent = datedEvents(events).sort(function (a, b) { return b.when - a.when; }).slice(0, 8);
       var table = "<h2>Latest selections</h2>";
@@ -905,7 +1324,8 @@
       weeks.slice().reverse().forEach(function (week) {
         var item = document.createElement("li");
         var label = document.createElement("span");
-        label.textContent = week.name + " — " + eventsIn(week.rows).length + " selections";
+        var activityCount = eventsIn(week.rows).filter(function (event) { return !isFeedback(event); }).length;
+        label.textContent = week.name + " — " + activityCount + " selections";
         var remove = document.createElement("button");
         remove.type = "button";
         remove.className = "quiet";
@@ -917,8 +1337,13 @@
             sessionStorage.setItem(HIDE_KEY, JSON.stringify(nextHidden));
             setMessage(week.name + " is hidden until this page is opened again.", false);
           } else {
-            storeWeeks(loadWeeks().filter(function (saved) { return saved.id !== week.id; }));
-            setMessage(week.name + " was removed from this browser.", false);
+            storeWeeks(memoryWeeks.filter(function (saved) { return saved.id !== week.id; })).then(function () {
+              setMessage(week.name + " was removed from this browser.", false);
+              render();
+            }).catch(function () {
+              setMessage("This browser could not update the saved weeks.", true);
+            });
+            return;
           }
           render();
         });
@@ -926,6 +1351,27 @@
         item.appendChild(remove);
         list.appendChild(item);
       });
+      if (namesHidden) {
+        document.getElementById("students").innerHTML = "<h2>Choose a student</h2><p class='empty'>Hidden until the class PIN is entered.</p>";
+        document.getElementById("student-pick").innerHTML = "";
+        document.getElementById("student-detail").innerHTML = "";
+        document.getElementById("recent").innerHTML = "";
+        document.getElementById("drawing-gallery").innerHTML = "";
+        return;
+      }
+      renderStudentView(weeks, events, feedbackEvents);
+      var picks = document.createElement("div");
+      picks.className = "student-picks";
+      students.forEach(function (item) {
+        if (!item.label || item.label === "Unknown") return;
+        var button = document.createElement("button");
+        button.type = "button";
+        button.className = "quiet" + (item.label === selectedStudent ? " on" : "");
+        button.setAttribute("data-student", item.label);
+        button.textContent = item.label + " · " + item.count;
+        picks.appendChild(button);
+      });
+      studentBox.appendChild(picks);
       renderDrawingGallery(weeks);
     }
 
@@ -956,6 +1402,30 @@
       }
       readDrawingFiles(files);
     });
+    document.getElementById("summary").addEventListener("click", function (event) {
+      var button = event.target.closest && event.target.closest("#overview-download");
+      if (!button || !lastBrief) return;
+      var blob = new Blob([lastBrief], { type: "text/plain" });
+      var url = URL.createObjectURL(blob);
+      var link = document.createElement("a");
+      link.href = url;
+      link.download = "CLEAR-overview.txt";
+      link.click();
+      URL.revokeObjectURL(url);
+    });
+    document.getElementById("students").addEventListener("click", function (event) {
+      var button = event.target.closest && event.target.closest("[data-student]");
+      if (!button || namesHidden) return;
+      selectedStudent = button.getAttribute("data-student");
+      scrollStudent = true;
+      render();
+    });
+    document.getElementById("student-pick").addEventListener("change", function () {
+      if (namesHidden) return;
+      selectedStudent = document.getElementById("student-pick").value;
+      scrollStudent = true;
+      render();
+    });
     document.getElementById("drawing-student").addEventListener("change", function () {
       renderDrawingGallery(weeksToShow());
     });
@@ -975,7 +1445,409 @@
       var file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
       takeFile(file);
     });
-    render();
+
+    var TEST_PIN = "1234";
+
+    function fourDigits(value) {
+      return /^[0-9]{4}$/.test(value);
+    }
+
+    function testPin(pin) {
+      return pin === TEST_PIN;
+    }
+
+    function setGateMessage(text, bad) {
+      var el = document.getElementById("gate-message");
+      el.textContent = text;
+      el.className = bad ? "message bad" : "message";
+    }
+
+    function armIdle() {
+      clearTimeout(idleTimer);
+      if (namesHidden || !document.getElementById("gate").hidden) return;
+      idleTimer = setTimeout(function () {
+        namesHidden = true;
+        document.body.classList.add("names-hidden");
+        render();
+      }, 10000);
+    }
+
+    async function enterPage(pin) {
+      sessionPin = pin;
+      try {
+        await openStoredWeeks();
+      } catch (err) {
+        memoryWeeks = [];
+        if (testPin(pin)) {
+          setMessage("Test password 1234 opened the page. Saved weeks stay locked with the class PIN.", true);
+        } else {
+          setMessage("The class PIN did not open the saved weeks.", true);
+        }
+      }
+      document.getElementById("gate").hidden = true;
+      namesHidden = false;
+      document.body.classList.remove("names-hidden");
+      render();
+      armIdle();
+    }
+
+    function showGateCopy() {
+      if (!readSecrets()) return;
+      document.getElementById("gate-help").textContent =
+        "Enter the class PIN and the teacher code for this browser.";
+      document.getElementById("gate-submit").textContent = "Open the week";
+    }
+
+    showGateCopy();
+
+    document.getElementById("gate-form").addEventListener("submit", function (event) {
+      event.preventDefault();
+      var pin = document.getElementById("gate-pin").value.trim();
+      var code = document.getElementById("gate-code").value.trim();
+      if (!fourDigits(pin) || !fourDigits(code)) {
+        setGateMessage("Use four digits for each code.", true);
+        return;
+      }
+      var secrets = readSecrets();
+      if (!secrets) {
+        var salt = crypto.getRandomValues(new Uint8Array(16));
+        pinCheck(pin, salt).then(function (pinHash) {
+          return pinCheck(code, salt).then(function (codeHash) {
+            localStorage.setItem(SECRET_KEY, JSON.stringify({
+              salt: bytesToB64(salt),
+              pin: pinHash,
+              code: codeHash
+            }));
+            return enterPage(pin);
+          });
+        }).catch(function () {
+          setGateMessage("This browser could not save the check for those codes.", true);
+        });
+        return;
+      }
+      var saltBytes = b64ToBytes(secrets.salt);
+      pinCheck(pin, saltBytes).then(function (pinHash) {
+        return pinCheck(code, saltBytes).then(function (codeHash) {
+          if ((pinHash !== secrets.pin && !testPin(pin)) || codeHash !== secrets.code) {
+            setGateMessage("Those codes do not match this browser.", true);
+            return;
+          }
+          return enterPage(pin);
+        });
+      }).catch(function () {
+        setGateMessage("This browser could not check those codes.", true);
+      });
+    });
+
+    document.getElementById("gate-delete").addEventListener("click", function () {
+      localStorage.removeItem(STORAGE_KEY);
+      memoryWeeks = [];
+      setGateMessage("Saved weeks were deleted from this browser.", false);
+      if (document.getElementById("gate").hidden) render();
+    });
+
+    document.getElementById("lock-page").addEventListener("click", function () {
+      sessionPin = "";
+      memoryWeeks = [];
+      namesHidden = false;
+      document.body.classList.remove("names-hidden");
+      clearTimeout(idleTimer);
+      document.getElementById("gate").hidden = false;
+      document.getElementById("gate-pin").value = "";
+      document.getElementById("gate-code").value = "";
+      showGateCopy();
+      document.getElementById("summary").innerHTML = "";
+      document.getElementById("days").innerHTML = "";
+      document.getElementById("hours").innerHTML = "";
+      document.getElementById("kinds").innerHTML = "";
+      document.getElementById("feelings").innerHTML = "";
+      document.getElementById("effect").innerHTML = "";
+      document.getElementById("students").innerHTML = "";
+      document.getElementById("student-pick").innerHTML = "";
+      document.getElementById("student-detail").innerHTML = "";
+      document.getElementById("recent").innerHTML = "";
+      document.getElementById("drawing-gallery").innerHTML = "";
+      document.getElementById("weeks").innerHTML = "";
+    });
+
+    document.getElementById("cover-show").addEventListener("click", function () {
+      var pin = document.getElementById("cover-pin").value.trim();
+      var secrets = readSecrets();
+      var message = document.getElementById("cover-message");
+      if (!secrets || !fourDigits(pin)) {
+        message.textContent = "Enter the four-digit class PIN.";
+        message.className = "message bad";
+        return;
+      }
+      pinCheck(pin, b64ToBytes(secrets.salt)).then(function (hash) {
+        if (hash !== secrets.pin && !testPin(pin)) {
+          message.textContent = "That class PIN does not match.";
+          message.className = "message bad";
+          return;
+        }
+        namesHidden = false;
+        document.body.classList.remove("names-hidden");
+        document.getElementById("cover-pin").value = "";
+        message.textContent = "";
+        render();
+        armIdle();
+      });
+    });
+
+    ["pointerdown", "keydown"].forEach(function (name) {
+      document.addEventListener(name, function () {
+        if (document.getElementById("gate").hidden && !namesHidden) armIdle();
+      });
+    });
+
+    const PANEL_SERVICE = "c1ea0001-1400-4c1e-8a11-000000000001";
+    const PANEL_CHAR = "c1ea0002-1400-4c1e-8a11-000000000001";
+    const TOOLS = [
+      ["Feelings thermometer", 1],
+      ["See, hear, feel", 2],
+      ["First, then", 4],
+      ["Schedule", 8],
+      ["Breathing", 16]
+    ];
+    const ACCS = ["Movement break", "Quiet corner", "Headphones", "Extra time", "Fidget", "Sit close", "Water break", "Chunk work", "Helper", "Stand up"];
+    const ORDER_NAMES = ["See, hear, feel", "First, then", "Schedule", "Breathing"];
+    let panelLink = null;
+
+    function panelStatus(text, bad) {
+      const el = document.getElementById("panel-status");
+      el.textContent = text;
+      el.className = bad ? "message bad" : "message";
+    }
+    function fillChecks(id, items, prefix) {
+      const box = document.getElementById(id);
+      items.forEach(function (item, index) {
+        const label = document.createElement("label");
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.id = prefix + index;
+        label.appendChild(input);
+        const name = Array.isArray(item) ? item[0] : item;
+        label.appendChild(document.createTextNode(" " + name));
+        box.appendChild(label);
+      });
+    }
+    fillChecks("panel-tools", TOOLS, "panel-tool-");
+    fillChecks("panel-acc", ACCS, "panel-acc-");
+    const orderBox = document.getElementById("panel-order");
+    for (let i = 0; i < 4; i++) {
+      const label = document.createElement("label");
+      label.textContent = "Step " + (i + 1);
+      const select = document.createElement("select");
+      select.id = "panel-order-" + i;
+      ORDER_NAMES.forEach(function (name, value) {
+        const option = document.createElement("option");
+        option.value = String(value);
+        option.textContent = name;
+        select.appendChild(option);
+      });
+      label.appendChild(select);
+      orderBox.appendChild(label);
+    }
+    function lineQueue() {
+      const lines = [];
+      const waiting = [];
+      return {
+        push: function (line) {
+          if (waiting.length) waiting.shift()(line);
+          else lines.push(line);
+        },
+        next: function () {
+          if (lines.length) return Promise.resolve(lines.shift());
+          return new Promise(function (resolve) {
+            const timer = setTimeout(function () { resolve(""); }, 2500);
+            waiting.push(function (line) { clearTimeout(timer); resolve(line); });
+          });
+        }
+      };
+    }
+    async function useLink(link) {
+      if (panelLink && panelLink.close) {
+        try { await panelLink.close(); } catch (err) {}
+      }
+      panelLink = link;
+      const pass = document.getElementById("panel-pass").value.trim();
+      if (!/^[0-9]{4}$/.test(pass)) {
+        panelStatus("Enter the four-digit settings password, then connect again.", true);
+        return;
+      }
+      await link.write("AUTH " + pass);
+      const auth = await link.next();
+      if (auth === "NO PIN") {
+        panelStatus("Set a settings password on the panel first. The class PIN does not open settings.", true);
+        return;
+      }
+      if (auth === "WAIT") {
+        panelStatus("Too many tries. Wait a minute, then connect again.", true);
+        return;
+      }
+      if (auth !== "OK") {
+        panelStatus("That settings password was not accepted.", true);
+        return;
+      }
+      await link.write("GET");
+      const got = {};
+      for (let i = 0; i < 30; i++) {
+        const line = await link.next();
+        if (!line || line === "END") break;
+        const cut = line.indexOf("=");
+        if (cut > 0) got[line.slice(0, cut)] = line.slice(cut + 1);
+      }
+      document.getElementById("panel-name").value = got.name || "";
+      document.getElementById("panel-teacher").value = got.teacher || "";
+      document.getElementById("panel-bright").value = got.bright || "80";
+      document.getElementById("panel-grade").value = got.grade || "2";
+      document.getElementById("panel-dark").checked = got.dark === "1";
+      document.getElementById("panel-bridger").checked = got.bridger !== "0";
+      document.getElementById("panel-express").checked = got.express !== "0";
+      document.getElementById("panel-calm").checked = got.calm === "1";
+      const tools = Number(got.tools || 31);
+      TOOLS.forEach(function (tool, index) {
+        document.getElementById("panel-tool-" + index).checked = (tools & tool[1]) !== 0;
+      });
+      const acc = Number(got.acc || 0);
+      ACCS.forEach(function (_, index) {
+        document.getElementById("panel-acc-" + index).checked = (acc & (1 << index)) !== 0;
+      });
+      (got.order || "0,1,2,3").split(",").forEach(function (value, index) {
+        const select = document.getElementById("panel-order-" + index);
+        if (select) select.value = value;
+      });
+      document.getElementById("panel-first").value = got.first || "";
+      document.getElementById("panel-then").value = got.then || "";
+      for (let i = 0; i < 4; i++) document.getElementById("panel-sch" + i).value = got["sch" + i] || "";
+      document.getElementById("panel-newpass").value = "";
+      document.getElementById("panel-form").hidden = false;
+      panelStatus("Connected. Change the settings, then send them to the panel.");
+    }
+    async function connectUsb() {
+      if (!navigator.serial) {
+        panelStatus("This browser cannot open USB from the page. Use Chrome or Edge on a local address.", true);
+        return;
+      }
+      const port = await navigator.serial.requestPort();
+      await port.open({ baudRate: 115200 });
+      const queue = lineQueue();
+      const reader = port.readable.getReader();
+      const writer = port.writable.getWriter();
+      const decoder = new TextDecoder();
+      let buf = "";
+      (async function () {
+        try {
+          while (true) {
+            const read = await reader.read();
+            if (read.done) break;
+            buf += decoder.decode(read.value, { stream: true });
+            let cut = buf.indexOf("\n");
+            while (cut >= 0) {
+              queue.push(buf.slice(0, cut).replace(/\r$/, ""));
+              buf = buf.slice(cut + 1);
+              cut = buf.indexOf("\n");
+            }
+          }
+        } catch (err) {}
+      })();
+      const encoder = new TextEncoder();
+      await useLink({
+        write: function (line) { return writer.write(encoder.encode(line + "\n")); },
+        next: queue.next,
+        close: function () { return port.close(); }
+      });
+    }
+    async function connectBle() {
+      if (!navigator.bluetooth) {
+        panelStatus("This browser cannot open Bluetooth from the page. Use Chrome or Edge on a local address.", true);
+        return;
+      }
+      const device = await navigator.bluetooth.requestDevice({
+        filters: [{ name: "CLEAR panel" }],
+        optionalServices: [PANEL_SERVICE]
+      });
+      const server = await device.gatt.connect();
+      const service = await server.getPrimaryService(PANEL_SERVICE);
+      const characteristic = await service.getCharacteristic(PANEL_CHAR);
+      const queue = lineQueue();
+      characteristic.addEventListener("characteristicvaluechanged", function (event) {
+        queue.push(new TextDecoder().decode(event.target.value).trim());
+      });
+      await characteristic.startNotifications();
+      const encoder = new TextEncoder();
+      await useLink({
+        write: function (line) { return characteristic.writeValue(encoder.encode(line)); },
+        next: queue.next,
+        close: function () { device.gatt.disconnect(); }
+      });
+    }
+    document.getElementById("panel-usb").addEventListener("click", function () {
+      connectUsb().catch(function (err) { panelStatus(err.message || "USB did not connect.", true); });
+    });
+    document.getElementById("panel-ble").addEventListener("click", function () {
+      connectBle().catch(function (err) { panelStatus(err.message || "Bluetooth did not connect.", true); });
+    });
+    document.getElementById("panel-send").addEventListener("click", async function () {
+      if (!panelLink) {
+        panelStatus("Connect the panel first.", true);
+        return;
+      }
+      let tools = 0;
+      TOOLS.forEach(function (tool, index) {
+        if (document.getElementById("panel-tool-" + index).checked) tools |= tool[1];
+      });
+      let acc = 0;
+      ACCS.forEach(function (_, index) {
+        if (document.getElementById("panel-acc-" + index).checked) acc |= (1 << index);
+      });
+      const order = [0, 1, 2, 3].map(function (i) {
+        return document.getElementById("panel-order-" + i).value;
+      });
+      if (new Set(order).size !== 4) {
+        panelStatus("Each strategy can be in the order only once.", true);
+        return;
+      }
+      const bright = Math.max(20, Math.min(100, Math.round(Number(document.getElementById("panel-bright").value) / 10) * 10));
+      const commands = [
+        ["name", document.getElementById("panel-name").value.trim()],
+        ["teacher", document.getElementById("panel-teacher").value.trim()],
+        ["bright", String(bright)],
+        ["grade", document.getElementById("panel-grade").value],
+        ["dark", document.getElementById("panel-dark").checked ? "1" : "0"],
+        ["bridger", document.getElementById("panel-bridger").checked ? "1" : "0"],
+        ["express", document.getElementById("panel-express").checked ? "1" : "0"],
+        ["calm", document.getElementById("panel-calm").checked ? "1" : "0"],
+        ["tools", String(tools)],
+        ["acc", String(acc)],
+        ["order", order.join(",")],
+        ["first", document.getElementById("panel-first").value.trim()],
+        ["then", document.getElementById("panel-then").value.trim()],
+        ["sch0", document.getElementById("panel-sch0").value.trim()],
+        ["sch1", document.getElementById("panel-sch1").value.trim()],
+        ["sch2", document.getElementById("panel-sch2").value.trim()],
+        ["sch3", document.getElementById("panel-sch3").value.trim()]
+      ];
+      const nextPass = document.getElementById("panel-newpass").value.trim();
+      if (nextPass) {
+        if (!/^[0-9]{4}$/.test(nextPass)) {
+          panelStatus("A new settings password needs four digits.", true);
+          return;
+        }
+        commands.push(["pass", nextPass]);
+      }
+      for (let i = 0; i < commands.length; i++) {
+        await panelLink.write("SET " + commands[i][0] + "=" + commands[i][1]);
+        const reply = await panelLink.next();
+        if (reply !== "OK") {
+          panelStatus("The panel did not take " + commands[i][0] + ".", true);
+          return;
+        }
+      }
+      if (nextPass) document.getElementById("panel-pass").value = nextPass;
+      document.getElementById("panel-newpass").value = "";
+      panelStatus("Sent. The panel saved these settings.");
+    });
   </script>
 </body>
 </html>
