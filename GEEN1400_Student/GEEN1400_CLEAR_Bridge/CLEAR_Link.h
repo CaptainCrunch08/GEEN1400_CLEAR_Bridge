@@ -139,6 +139,10 @@ struct ClearStudentSettings {
   uint8_t version;
   uint8_t kind;
   uint8_t drawingEnabled;
+  uint8_t expressOn;
+  uint8_t calmMode;
+  uint8_t bridgerOn;
+  uint8_t toolMask;
 };
 #pragma pack(pop)
 

@@ -1,41 +1,29 @@
 /*
   GEEN1400 teacher device
-  Seeed XIAO ESP32-S3 Sense and a 2.4 inch touch LCD (240x320, ILI9341,
-  XPT2046). Yes, No, and Next are buttons drawn on the glass.
+  ESP32-2432S024 ("CYD"): ESP32-WROOM-32, 2.4 inch ILI9341 240x320.
+  The picture uses SPI. The touch chip is capacitive and uses I2C,
+  address 0x15 (CST816 family). Yes, No, and Next are buttons drawn
+  on the glass.
 
-  Board in the Arduino IDE: XIAO_ESP32S3
-  PSRAM: OPI PSRAM
-  USB CDC On Boot: Enabled
-  USB Mode: USB-OTG (TinyUSB). That is the board default. Hardware CDC
-  mode cannot show the week as a USB drive.
-  Partition: Default with spiffs
+  Board in the Arduino IDE: ESP32 Dev Module
+  Partition: Default 4MB with spiffs
   Library: LovyanGFX (Library Manager)
 
-  Wiring. The Sense microSD socket already uses D8, D9, and D10, so the
-  screen stays off those pins. Tie the LCD RST pin to 3V3. The touch
-  chip shares the LCD clock and data pins. Its own select and data-out
-  wires use the pins that used to be the Yes and No buttons.
+  This board does not show the week as a USB drive. The week stays
+  in the chip's flash. The CLEAR website reads that week over this
+  same USB port after the class PIN and teacher code are accepted.
+  See CLEAR_WebLink.h.
 
-  LCD VCC  3V3
-  LCD GND  GND
-  LCD DIN  D5   GPIO6     also touch T_DIN
-  LCD CLK  D4   GPIO5     also touch T_CLK
-  LCD CS   D3   GPIO4
-  LCD DC   D2   GPIO3
-  LCD RST  3V3
-  LCD BL   D0   GPIO1
-  Touch T_DO   D1   GPIO2
-  Touch T_CS   D6   GPIO43
-  Touch T_IRQ  not connected
+  The touch controller's origin is the opposite corner of the picture.
+  A tap is flipped on both axes so the finger and the button match.
 
-  Blank button  D7  GPIO44  to GND. Press to black the glass. Press
-  again to bring the picture back. Power stays on.
+  Blank button  GPIO22 to GND. Press to black the glass. Press again
+  to bring the picture back. Power stays on. The pin holds itself
+  high until the button is pressed.
   The gear in the top right opens Look. Brightness and light or dark
   are saved there. Full power on this backlight is harsh, so the bright
   end of the slider stays below full power.
-  Buzzer        D8  GPIO7   active or passive buzzer to GND.
-  D8 is the Sense SD clock. This sketch holds the SD card off, so the
-  pin is free. Take a card out of the socket before using the buzzer.
+  Buzzer        GPIO21   active or passive buzzer to GND.
   One second: a student choice. Two short: an accommodation.
   Two short then a longer one: Help, or I need my teacher.
   Yes or Not yet after a strategy is saved in the week and does not buzz.
@@ -45,14 +33,11 @@
   following student. Yes and No answer the student on screen and send
   that answer back.
 
-  When CLEAR_Teacher_Config.h is filled in, completed drawings are sent
-  over Wi-Fi to the local OCR computer and recognized text returns over BLE.
+  Drawings stay on the student panel. This device does not keep them
+  and does not send them to the website.
 
-  The week is kept in the chip's flash. The drive does not appear until
-  the teacher enters the class PIN and the teacher code. CLEAR.CSV on
-  that drive is locked with the class PIN. Copying the file leaves the
-  week on the device. Deleting CLEAR.CSV and unplugging starts a new
-  empty week. A panel that has not been allowed yet is held on a waiting
+  The week is kept in the chip's flash. This board does not show that
+  flash as a USB drive. A panel that has not been allowed yet is held on a waiting
   list. Its message is not shown and is not written into the week.
 
   Neither ESP32 has a battery clock. The student panel keeps the time,
@@ -64,6 +49,7 @@
 */
 
 #include <SPIFFS.h>
+#include "CLEAR_WebLink.h"
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <Preferences.h>
@@ -98,24 +84,28 @@
 #define CLEAR_OCR_TOKEN ""
 #endif
 
-#if !defined(ARDUINO_USB_MODE) || ARDUINO_USB_MODE != 1
+#if defined(CONFIG_IDF_TARGET_ESP32S3) && (!defined(ARDUINO_USB_MODE) || ARDUINO_USB_MODE != 1)
 #include "USB.h"
 #include "USBMSC.h"
 #define CLEAR_USB_DRIVE 1
 #else
 #define CLEAR_USB_DRIVE 0
 #endif
+#include <Wire.h>
 
-static const int PIN_LCD_MOSI = 6;
-static const int PIN_LCD_SCK = 5;
-static const int PIN_LCD_CS = 4;
-static const int PIN_LCD_DC = 3;
-static const int PIN_LCD_BL = 1;
-static const int PIN_SD_CS = 21;
-static const int PIN_TOUCH_MISO = 2;
-static const int PIN_TOUCH_CS = 43;
-static const int PIN_BLANK = 44;
-static const int PIN_BUZZ = 7;
+static const int PIN_LCD_MOSI = 13;
+static const int PIN_LCD_MISO = 12;
+static const int PIN_LCD_SCK = 14;
+static const int PIN_LCD_CS = 15;
+static const int PIN_LCD_DC = 2;
+static const int PIN_LCD_BL = 27;
+static const int PIN_TP_SDA = 33;
+static const int PIN_TP_SCL = 32;
+static const int PIN_TP_RST = 25;
+static const uint8_t TP_ADDR = 0x15;
+static const int PIN_SD_CS = 5;
+static const int PIN_BLANK = 22;
+static const int PIN_BUZZ = 21;
 
 static const int BUTTON_Y = 268;
 static const int BUTTON_H = 52;
@@ -132,7 +122,7 @@ static uint16_t COL_NO = 0xFBE4;
 static uint16_t COL_FOOT = 0xE73C;
 
 // The glass stays covered until the teacher finishes both codes.
-// After that, ten seconds with no touch covers the student message again.
+// After that, five minutes with no touch covers the student message again.
 static const int MODE_MAKE_PIN = 1;
 static const int MODE_MAKE_PIN_AGAIN = 2;
 static const int MODE_MAKE_CODE = 3;
@@ -144,14 +134,15 @@ static const int MODE_COVER = 8;
 static const int MODE_PENDING = 9;
 static const int MODE_TRUSTED = 10;
 static const int MODE_LOOK = 11;
+static const int MODE_STUDENT = 12;
 
 static const int GEAR_X = 200;
-static const int GEAR_Y = 2;
+static const int GEAR_Y = 18;
 static const int GEAR_W = 36;
 static const int GEAR_H = 32;
 static const int BRIGHT_MIN = 20;
 static const int BRIGHT_MAX = 100;
-static const unsigned long PRIVACY_IDLE_MS = 10000;
+static const unsigned long PRIVACY_IDLE_MS = 5UL * 60UL * 1000UL;
 static const int TRUSTED_MAX = 12;
 static const int PENDING_MAX = 8;
 
@@ -195,7 +186,6 @@ static const char *CLOCK_TZ = "MST7MDT,M3.2.0,M11.1.0";
 class LGFX : public lgfx::LGFX_Device {
   lgfx::Bus_SPI _bus;
   lgfx::Panel_ILI9341 _panel;
-  lgfx::Touch_XPT2046 _touch;
   lgfx::Light_PWM _light;
 public:
   LGFX() {
@@ -209,7 +199,7 @@ public:
       cfg.use_lock = true;
       cfg.pin_sclk = PIN_LCD_SCK;
       cfg.pin_mosi = PIN_LCD_MOSI;
-      cfg.pin_miso = PIN_TOUCH_MISO;
+      cfg.pin_miso = PIN_LCD_MISO;
       cfg.pin_dc = PIN_LCD_DC;
       _bus.config(cfg);
       _panel.setBus(&_bus);
@@ -226,27 +216,9 @@ public:
       cfg.offset_rotation = 0;
       cfg.readable = false;
       cfg.invert = false;
-      cfg.rgb_order = true;
+      cfg.rgb_order = false;
       cfg.bus_shared = true;
       _panel.config(cfg);
-    }
-    {
-      auto cfg = _touch.config();
-      cfg.x_min = 300;
-      cfg.x_max = 3900;
-      cfg.y_min = 400;
-      cfg.y_max = 3900;
-      cfg.pin_int = -1;
-      cfg.bus_shared = true;
-      cfg.offset_rotation = 0;
-      cfg.spi_host = SPI2_HOST;
-      cfg.freq = 1000000;
-      cfg.pin_sclk = PIN_LCD_SCK;
-      cfg.pin_mosi = PIN_LCD_MOSI;
-      cfg.pin_miso = PIN_TOUCH_MISO;
-      cfg.pin_cs = PIN_TOUCH_CS;
-      _touch.config(cfg);
-      _panel.setTouch(&_touch);
     }
     {
       // PWM on the backlight pin. A higher number is brighter.
@@ -328,6 +300,9 @@ static int lookReturn = MODE_ENTER_PIN;
 static int teacherBright = 40;
 static bool teacherDark = false;
 static bool drawingEnabled = true;
+static bool studentCalm = false;
+static bool studentBridger = true;
+static uint8_t studentTools = 31;
 static bool studentSettingsPending = true;
 static unsigned long lastSettingsBroadcastMs = 0;
 static uint8_t connectedPanels = 0;
@@ -405,17 +380,6 @@ static void drawWrapped(const char *text, int x, int y, int maxWidth, int bottom
   }
 }
 
-static void formatSent(uint32_t unixTime, char *out, int size) {
-  if (unixTime < 1000000000UL) {
-    copyField(out, size, "No time yet");
-    return;
-  }
-  time_t stamp = unixTime;
-  struct tm parts;
-  localtime_r(&stamp, &parts);
-  strftime(out, size, "%b %d  %I:%M %p", &parts);
-}
-
 static void copyPin(char *dest, const char *src) {
   for (int i = 0; i < 4; i++) {
     dest[i] = src[i];
@@ -435,6 +399,13 @@ static bool fourDigits(const char *text) {
   return text[4] == 0;
 }
 
+// The website sends the class PIN and teacher code over USB. They have
+// to match the codes saved on this device. 1234 is only a screen bypass.
+static bool webCodesMatch(const char *pin, const char *code) {
+  return fourDigits(pin) && fourDigits(code) &&
+         strcmp(pin, classPin) == 0 && strcmp(code, teacherCode) == 0;
+}
+
 static uint32_t classPasskey() {
   return (uint32_t)atoi(classPin);
 }
@@ -451,6 +422,8 @@ static bool nameIsTrusted(const char *name) {
   }
   return false;
 }
+
+static void applyLook();
 
 static void saveTrusted() {
   String packed;
@@ -473,7 +446,11 @@ static void loadPrivacy() {
   teacherBright = privacyPrefs.getInt("bright", 40);
   teacherDark = privacyPrefs.getInt("dark", 0) != 0;
   drawingEnabled = privacyPrefs.getInt("draw", 1) != 0;
+  studentCalm = privacyPrefs.getInt("scalm", 0) != 0;
+  studentBridger = privacyPrefs.getInt("sbridger", 1) != 0;
+  studentTools = (uint8_t)privacyPrefs.getInt("stools", 31);
   privacyPrefs.end();
+  studentTools &= 31;
   if (teacherBright < BRIGHT_MIN) {
     teacherBright = BRIGHT_MIN;
   }
@@ -565,6 +542,7 @@ static void paintTapButton(int x, const char *label, uint16_t fill);
 static void finishSignIn();
 static void applyLook();
 static void paintGear();
+static void paintStudentSettings();
 
 static void paintPrivacyKeys() {
   static const char *labels[] = {
@@ -578,7 +556,7 @@ static void paintPrivacyKeys() {
   for (int i = 0; i < 12; i++) {
     int x = padX + (i % 3) * (padW + gap);
     int y = padY + (i / 3) * (padH + gap);
-    lcd.fillRoundRect(x, y, padW, padH, 8, COL_FOOT);
+    lcd.fillRoundRect(x, y, padW, padH, 10, COL_FOOT);
     lcd.setTextDatum(textdatum_t::middle_center);
     lcd.setFont(&fonts::Font2);
     lcd.setTextColor(COL_FG, COL_FOOT);
@@ -635,13 +613,12 @@ static void paintPrivacy() {
   if (screenMode == MODE_MAKE_CODE || screenMode == MODE_MAKE_CODE_AGAIN ||
       screenMode == MODE_ENTER_CODE) {
     title = "Teacher code";
-  } else if (screenMode == MODE_COVER) {
-    title = "Hidden";
   }
+  lcd.setTextDatum(textdatum_t::middle_left);
   lcd.setFont(&fonts::Font4);
-  lcd.drawString(title, 12, 12);
+  lcd.drawString(title, 16, 20);
   lcd.setFont(&fonts::Font2);
-  lcd.drawString(privacyNote, 12, 44);
+  lcd.drawString(privacyNote, 16, 52);
   lcd.setFont(&fonts::Font4);
   char dots[8] = "_ _ _ _";
   int filled = (int)strlen(pinEntry);
@@ -651,7 +628,7 @@ static void paintPrivacy() {
   for (int i = 0; i < filled; i++) {
     dots[i * 2] = '*';
   }
-  lcd.drawString(dots, 12, 66);
+  lcd.drawString(dots, 16, 78);
   paintPrivacyKeys();
   paintGear();
 }
@@ -775,6 +752,19 @@ static void paintMinuteButton() {
 static bool viewingAid() {
   return waitingCount > 0 && viewIndex >= 0 && viewIndex < waitingCount &&
          waiting[viewIndex].asksTeacher == CLEAR_ASK_AID;
+}
+
+static bool viewingZone() {
+  return waitingCount > 0 && viewIndex >= 0 && viewIndex < waitingCount &&
+         strcmp(waiting[viewIndex].choice, "My energy is in this zone") == 0;
+}
+
+static void paintSoonButton() {
+  lcd.fillRect(0, BUTTON_Y, 240, BUTTON_H, COL_TRY);
+  lcd.setTextDatum(textdatum_t::middle_center);
+  lcd.setFont(&fonts::Font2);
+  lcd.setTextColor(teacherDark ? COL_FG : (uint16_t)0x0000, COL_TRY);
+  lcd.drawString("I'll be there soon", 120, BUTTON_Y + BUTTON_H / 2);
 }
 
 static bool screenBlank = false;
@@ -921,6 +911,9 @@ static void saveLook() {
   privacyPrefs.putInt("bright", teacherBright);
   privacyPrefs.putInt("dark", teacherDark ? 1 : 0);
   privacyPrefs.putInt("draw", drawingEnabled ? 1 : 0);
+  privacyPrefs.putInt("scalm", studentCalm ? 1 : 0);
+  privacyPrefs.putInt("sbridger", studentBridger ? 1 : 0);
+  privacyPrefs.putInt("stools", studentTools);
   privacyPrefs.end();
 }
 
@@ -940,6 +933,19 @@ static void setBright(int pct) {
   saveLook();
 }
 
+static void paintBattery(int x, int y, uint16_t paper) {
+  const int w = 18;
+  const int h = 10;
+  uint16_t ink = COL_FG;
+  lcd.drawRect(x, y, w, h, ink);
+  lcd.fillRect(x + w, y + 3, 2, 4, ink);
+  lcd.setTextDatum(textdatum_t::middle_left);
+  lcd.setFont(&fonts::Font2);
+  lcd.setTextColor(ink, paper);
+  lcd.drawString("USB", x + w + 4, y + h / 2);
+  lcd.setTextDatum(textdatum_t::top_left);
+}
+
 static void paintGear() {
   uint16_t btn = teacherDark ? (uint16_t)0x39E7 : (uint16_t)0xDEDB;
   uint16_t metal = teacherDark ? (uint16_t)0xBDF7 : (uint16_t)0x4A69;
@@ -954,6 +960,12 @@ static void paintGear() {
   }
   lcd.fillCircle(cx, cy, 5, metal);
   lcd.fillCircle(cx, cy, 2, btn);
+  uint16_t paper = COL_BG;
+  if (screenMode == MODE_QUEUE && waitingCount > 0 &&
+      viewIndex >= 0 && viewIndex < waitingCount) {
+    paper = waiting[viewIndex].asksTeacher ? COL_ASK : COL_TRY;
+  }
+  paintBattery(176, 2, paper);
 }
 
 static bool gearHit(int x, int y) {
@@ -971,11 +983,12 @@ static void paintLook() {
   lcd.setFont(&fonts::Font4);
   lcd.setTextColor(COL_FG, COL_BG);
   lcd.drawString("Look", 12, 26);
+  paintBattery(88, 4, COL_BG);
 
   lcd.setTextDatum(textdatum_t::top_left);
   lcd.setFont(&fonts::Font2);
   lcd.setTextColor(COL_FG, COL_BG);
-  lcd.drawString("Brightness", 12, 60);
+  lcd.drawString("Brightness", 12, 68);
   lcd.fillRoundRect(8, 86, 36, 36, 8, COL_FOOT);
   lcd.fillRoundRect(196, 86, 36, 36, 8, COL_FOOT);
   lcd.setTextDatum(textdatum_t::middle_center);
@@ -995,6 +1008,7 @@ static void paintLook() {
   }
   char pct[8];
   snprintf(pct, sizeof(pct), "%d%%", teacherBright);
+  lcd.setTextDatum(textdatum_t::top_center);
   lcd.setTextColor(COL_FG, COL_BG);
   lcd.drawString(pct, 120, 136);
 
@@ -1006,10 +1020,65 @@ static void paintLook() {
   lcd.drawString("Light", 64, 198);
   lcd.setTextColor(COL_FG, darkFill);
   lcd.drawString("Dark", 176, 198);
-  uint16_t drawFill = drawingEnabled ? COL_TRY : COL_FOOT;
-  lcd.fillRoundRect(12, 232, 216, 44, 8, drawFill);
-  lcd.setTextColor(teacherDark ? COL_FG : (uint16_t)0x0000, drawFill);
-  lcd.drawString(drawingEnabled ? "Drawing on" : "Drawing off", 120, 254);
+  lcd.fillRoundRect(12, 232, 216, 44, 8, COL_FOOT);
+  lcd.setTextColor(COL_FG, COL_FOOT);
+  lcd.drawString("Student settings", 120, 254);
+  lcd.setTextDatum(textdatum_t::top_left);
+}
+
+static bool studentToggleOn(int row) {
+  if (row == 0) return drawingEnabled;
+  if (row == 1) return studentCalm;
+  if (row == 2) return studentBridger;
+  static const uint8_t bits[] = {1, 2, 16, 4, 8};
+  if (row >= 3 && row <= 7) {
+    return (studentTools & bits[row - 3]) != 0;
+  }
+  return false;
+}
+
+static void flipStudentToggle(int row) {
+  if (row == 0) drawingEnabled = !drawingEnabled;
+  else if (row == 1) studentCalm = !studentCalm;
+  else if (row == 2) studentBridger = !studentBridger;
+  else if (row >= 3 && row <= 7) {
+    static const uint8_t bits[] = {1, 2, 16, 4, 8};
+    studentTools ^= bits[row - 3];
+  } else {
+    return;
+  }
+  studentSettingsPending = true;
+  saveLook();
+}
+
+static void paintStudentSettings() {
+  static const char *labels[] = {
+    "Drawing", "Calm screen", "Bridger", "Thermometer",
+    "See, hear, feel", "Breathing", "First, then", "Schedule"
+  };
+  lcd.fillScreen(COL_BG);
+  lcd.fillRoundRect(148, 8, 80, 36, 8, COL_TRY);
+  lcd.setTextDatum(textdatum_t::middle_center);
+  lcd.setFont(&fonts::Font2);
+  lcd.setTextColor(COL_FG, COL_TRY);
+  lcd.drawString("Back", 188, 26);
+  lcd.setTextDatum(textdatum_t::middle_left);
+  lcd.setTextColor(COL_FG, COL_BG);
+  lcd.drawString("Students", 12, 26);
+  paintBattery(88, 4, COL_BG);
+  for (int i = 0; i < 8; i++) {
+    int top = 44 + i * 34;
+    bool on = studentToggleOn(i);
+    lcd.fillRoundRect(8, top, 224, 32, 6, COL_FOOT);
+    lcd.setTextDatum(textdatum_t::middle_left);
+    lcd.setTextColor(COL_FG, COL_FOOT);
+    lcd.drawString(labels[i], 16, top + 16);
+    uint16_t fill = on ? COL_TRY : COL_BG;
+    lcd.fillRoundRect(156, top + 4, 70, 24, 6, fill);
+    lcd.setTextDatum(textdatum_t::middle_center);
+    lcd.setTextColor(teacherDark || !on ? COL_FG : (uint16_t)0x0000, fill);
+    lcd.drawString(on ? "On" : "Off", 191, top + 16);
+  }
   lcd.setTextDatum(textdatum_t::top_left);
 }
 
@@ -1022,13 +1091,19 @@ static void paintScreen() {
     paintLook();
     return;
   }
+  if (screenMode == MODE_STUDENT) {
+    paintStudentSettings();
+    return;
+  }
   if (screenMode != MODE_QUEUE) {
     paintPrivacy();
     return;
   }
   markCurrentSeen();
   lcd.fillScreen(COL_BG);
-  if (viewingAid()) {
+  if (viewingZone()) {
+    paintSoonButton();
+  } else if (viewingAid()) {
     paintTapButton(YES_X, "Accept", COL_TRY);
     paintTapButton(NO_X, "Decline", COL_NO);
     paintMinuteButton();
@@ -1040,8 +1115,9 @@ static void paintScreen() {
 
   if (waitingCount < 1) {
     lcd.setTextDatum(textdatum_t::top_left);
+    lcd.setFont(&fonts::Font2);
     lcd.setTextColor(COL_FG, COL_BG);
-    lcd.drawString("Waiting for a student", 12, 24);
+    lcd.drawString("Waiting for a student", 12, 36);
     paintGear();
     return;
   }
@@ -1051,41 +1127,40 @@ static void paintScreen() {
   const ClearNote *note = &waiting[viewIndex];
   uint16_t band = note->asksTeacher ? COL_ASK : COL_TRY;
   lcd.fillRect(0, 0, 240, 36, band);
+  lcd.setTextDatum(textdatum_t::middle_left);
+  lcd.setFont(&fonts::Font2);
   lcd.setTextColor(COL_FG, band);
   lcd.drawString(note->asksTeacher ? "Ask" : "Try", 12, 18);
   char countBuf[16];
   snprintf(countBuf, sizeof(countBuf), "%d of %d", viewIndex + 1, waitingCount);
   lcd.setTextDatum(textdatum_t::middle_right);
-  lcd.drawString(countBuf, GEAR_X - 6, 18);
+  lcd.drawString(countBuf, 168, 18);
 
-  lcd.setTextDatum(textdatum_t::top_left);
+  lcd.setTextDatum(textdatum_t::middle_left);
   lcd.setTextColor(COL_FG, COL_BG);
   lcd.setFont(&fonts::Font4);
-  lcd.drawString(note->student, 12, 48);
+  lcd.drawString(note->student, 12, 58);
+  lcd.setTextDatum(textdatum_t::top_left);
   lcd.setFont(&fonts::Font2);
-  char when[28];
-  formatSent(note->timeSent, when, sizeof(when));
-  lcd.drawString(when, 12, 80);
-  lcd.drawString("Issue", 12, 112);
-  lcd.drawString(note->feeling, 12, 134);
-  lcd.drawString(note->asksTeacher ? "Request" : "Solution", 12, 168);
-  drawWrapped(note->choice, 12, 190, 216, 236);
+  lcd.drawString("Issue", 12, 100);
+  lcd.drawString(note->feeling, 12, 122);
+  lcd.drawString(note->asksTeacher ? "Request" : "Solution", 12, 156);
+  drawWrapped(note->choice, 12, 178, 216, 248);
   const char *state = "Pending";
   if (note->answer == CLEAR_ANSWER_SEEN) {
     state = "Seen";
   }
-  lcd.setTextDatum(textdatum_t::middle_right);
+  lcd.setTextDatum(textdatum_t::top_left);
   lcd.setFont(&fonts::Font2);
   lcd.setTextColor(COL_FG, COL_BG);
-  lcd.drawString(state, 228, 252);
-  lcd.setTextDatum(textdatum_t::top_left);
   if (pendingCount > 0) {
     char waitBuf[32];
     snprintf(waitBuf, sizeof(waitBuf), "%d panel%s waiting", pendingCount,
              pendingCount == 1 ? "" : "s");
-    lcd.setFont(&fonts::Font2);
-    lcd.drawString(waitBuf, 12, 244);
+    lcd.drawString(waitBuf, 12, 252);
   }
+  lcd.setTextDatum(textdatum_t::top_right);
+  lcd.drawString(state, 228, 252);
   paintGear();
 }
 
@@ -1171,7 +1246,6 @@ static bool writeFreshLog() {
 static bool ntpStarted = false;
 static bool clockSynced = false;
 static unsigned long clockSaveMs = 0;
-static const char *CLOCK_TZ = "MST7MDT,M3.2.0,M11.1.0";
 
 static void saveTeacherClock() {
   time_t now = time(nullptr);
@@ -1660,20 +1734,14 @@ static void takeNotice(const uint8_t *data, int len) {
       data[1] >= CLEAR_KIND_DRAWING_START &&
       data[1] <= CLEAR_KIND_DRAWING_END &&
       len <= (int)sizeof(ClearDrawingChunk)) {
-    uint8_t next = (drawingRingWrite + 1) % DRAWING_RING_MAX;
-    if (next == drawingRingRead) {
-      if (len >= (int)offsetof(ClearDrawingStart, student)) {
-        uint32_t overflowId = 0;
-        memcpy(&overflowId, data + offsetof(ClearDrawingStart, drawingId),
-               sizeof(overflowId));
-        drawingOverflowId = overflowId;
-      }
-      drawingQueueOverflow = true;
-      return;
+    // Drawings stay on the student panel. Tell that panel the picture
+    // was not stored here, and do not write it to flash.
+    if (data[1] == CLEAR_KIND_DRAWING_END &&
+        len >= (int)sizeof(ClearDrawingEnd)) {
+      ClearDrawingEnd endPacket;
+      memcpy(&endPacket, data, sizeof(endPacket));
+      sendDrawingResult(endPacket.drawingId, false);
     }
-    memcpy(drawingRing[drawingRingWrite].bytes, data, len);
-    drawingRing[drawingRingWrite].length = len;
-    drawingRingWrite = next;
     return;
   }
   if (len != (int)sizeof(ClearNote)) {
@@ -1698,7 +1766,9 @@ static void takeNotice(const uint8_t *data, int len) {
 class NoticeCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *characteristic) override {
     size_t length = characteristic->getValue().length();
-    if (length > sizeof(ClearDrawingChunk)) {
+    // A student note is larger than a drawing chunk. Dropping anything
+    // over the chunk size throws away every Help and Ask message.
+    if (length > sizeof(ClearNote)) {
       return;
     }
     takeNotice(characteristic->getData(), length);
@@ -1733,6 +1803,9 @@ static void startRadio() {
   service->start();
   BLEAdvertising *advertising = BLEDevice::getAdvertising();
   advertising->addServiceUUID(CLEAR_SERVICE_UUID);
+  // The name and the long service id do not both fit in one advert.
+  // The name set above goes in the scan reply so the student can find it.
+  advertising->setScanResponse(true);
   advertising->start();
 }
 
@@ -1757,6 +1830,10 @@ static void serviceStudentSettings() {
   packet.version = CLEAR_LINK_VERSION;
   packet.kind = CLEAR_KIND_STUDENT_SETTINGS;
   packet.drawingEnabled = drawingEnabled ? 1 : 0;
+  packet.expressOn = drawingEnabled ? 1 : 0;
+  packet.calmMode = studentCalm ? 1 : 0;
+  packet.bridgerOn = studentBridger ? 1 : 0;
+  packet.toolMask = studentTools;
   replyChar->setValue((uint8_t *)&packet, sizeof(packet));
   replyChar->notify();
   studentSettingsPending = false;
@@ -2271,11 +2348,48 @@ static void cycleStudent() {
   paintScreen();
 }
 
+// Rotation 2 turns the picture right side up. The chip's raw point
+// then matches the pixel under the finger.
+static bool readCapTouch(int32_t *x, int32_t *y) {
+  Wire.beginTransmission(TP_ADDR);
+  Wire.write(0x00);
+  if (Wire.endTransmission(false) != 0) {
+    return false;
+  }
+  if (Wire.requestFrom(TP_ADDR, (uint8_t)7) < 7) {
+    return false;
+  }
+  uint8_t report[7];
+  for (int i = 0; i < 7; i++) {
+    report[i] = Wire.read();
+  }
+  if (report[2] == 0) {
+    return false;
+  }
+  int rawX = ((report[3] & 0x0F) << 8) | report[4];
+  int rawY = ((report[5] & 0x0F) << 8) | report[6];
+  if (rawX < 0) {
+    rawX = 0;
+  }
+  if (rawY < 0) {
+    rawY = 0;
+  }
+  if (rawX > 239) {
+    rawX = 239;
+  }
+  if (rawY > 319) {
+    rawY = 319;
+  }
+  *x = rawX;
+  *y = rawY;
+  return true;
+}
+
 // One press counts once. A finger resting on Yes must not answer again.
 static bool takeTap(int32_t *x, int32_t *y) {
   int32_t tx = 0;
   int32_t ty = 0;
-  bool down = lcd.getTouch(&tx, &ty);
+  bool down = readCapTouch(&tx, &ty);
   bool hit = down && !touchWasDown && (millis() - buttonMs) >= BUTTON_GAP_MS;
   if (hit) {
     buttonMs = millis();
@@ -2333,7 +2447,12 @@ static void finishSignIn() {
 }
 
 void setup() {
+  Serial.setRxBufferSize(1024);
   Serial.begin(115200);
+  delay(50);
+  // The website looks for this line. Say it before the screen starts,
+  // because opening the USB port can miss anything sent later.
+  Serial.println("CLEAR TEACHER 1");
   setenv("TZ", CLOCK_TZ, 1);
   tzset();
   pinMode(PIN_BLANK, INPUT_PULLUP);
@@ -2348,17 +2467,28 @@ void setup() {
 #endif
   pinMode(PIN_SD_CS, OUTPUT);
   digitalWrite(PIN_SD_CS, HIGH);
+  pinMode(PIN_TP_RST, OUTPUT);
+  digitalWrite(PIN_TP_RST, LOW);
+  delay(20);
+  digitalWrite(PIN_TP_RST, HIGH);
+  delay(200);
+  Wire.begin(PIN_TP_SDA, PIN_TP_SCL);
+  Wire.setClock(100000);
   loadPrivacy();
   lcd.init();
-  lcd.setRotation(0);
+  lcd.setRotation(2);
   applyBrightness();
   startStorage();
+  ClearWebLink::begin(SPIFFS, LOG_PATH, "/", webCodesMatch);
+  ClearWebLink::poll();
   startTeacherClock();
   activityMs = millis();
   paintScreen();
+  ClearWebLink::poll();
 }
 
 void loop() {
+  ClearWebLink::poll();
   serviceBlank();
   serviceBuzz();
   if (screenBlank) {
@@ -2409,15 +2539,25 @@ void loop() {
         setBright(BRIGHT_MIN + rel * (BRIGHT_MAX - BRIGHT_MIN) / 136);
       }
     } else if (ty >= 232 && ty < 276) {
-      drawingEnabled = !drawingEnabled;
-      studentSettingsPending = true;
-      saveLook();
+      screenMode = MODE_STUDENT;
     } else if (ty >= 176 && ty < 220) {
       bool nextDark = tx >= 124;
       if (nextDark != teacherDark) {
         teacherDark = nextDark;
         applyLook();
         saveLook();
+      }
+    }
+    paintScreen();
+    return;
+  }
+  if (screenMode == MODE_STUDENT) {
+    if (tx >= 148 && ty < 52) {
+      screenMode = MODE_LOOK;
+    } else if (ty >= 44) {
+      int row = (ty - 44) / 34;
+      if (row >= 0 && row < 8 && ty < 44 + row * 34 + 32) {
+        flipStudentToggle(row);
       }
     }
     paintScreen();
@@ -2507,7 +2647,9 @@ void loop() {
     return;
   }
   if (ty >= BUTTON_Y) {
-    if (tx < NO_X) {
+    if (viewingZone()) {
+      answerCurrent(CLEAR_ANSWER_LATER);
+    } else if (tx < NO_X) {
       answerCurrent(CLEAR_ANSWER_YES);
     } else if (tx < NEXT_X) {
       answerCurrent(CLEAR_ANSWER_NO);

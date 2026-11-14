@@ -155,6 +155,7 @@ const ui = {
   title: "What do you need?",
   open: null,
   status: "Ready",
+  battery: 82,
   bridger: true,
   express: true,
   lastCope: "ground",
@@ -271,7 +272,7 @@ function cardFill(color) {
   if (ui.calm) return ui.dark ? "#3a3a3a" : "#d8d8d8";
   if (!ui.dark) return color;
   if (color === "#e7f4ee") return "#1c3a2c";
-  if (color === "#fbf6ec") return "#3a3228";
+  if (color === "#fbf6ec") return "#eec28c";
   if (color === "#eee9f6") return "#2c2838";
   if (color === "#e7f3fb") return "#243040";
   return "#2a3138";
@@ -410,36 +411,15 @@ function footer(ctx) {
     const helpFill = ui.dark ? "#ff8c1a" : S.ASK;
     roundRect(ctx, 8, 424, 96, 48, 10, helpFill);
     text(ctx, "Help", 56, 448, 16, "#111", "center");
-    roundRect(ctx, 112, 424, 108, 48, 10, calm ? "#c8c8c8" : S.ROW);
-    text(ctx, "Hear it", 166, 448, 16, calm ? "#000" : S.FG, "center");
   }
-  const room = bubbleBox().x - 244;
-  text(ctx, clipStatus(ui.status, room), 232, calm ? 432 : 448, 16, ui.dark ? "#9aa3ad" : "#666", "left", "middle");
+  const room = bubbleBox().x - 132;
+  text(ctx, clipStatus(ui.status, room), 120, 448, 16, ui.dark ? "#9aa3ad" : "#666", "left", "middle");
   paintBridger(ctx);
 }
 function markBuzz(choice, aid) {
   if (choice === "I need help" || choice === "I need my teacher") ui.buzz = "Buzz: help";
   else if (aid) ui.buzz = "Buzz: 2 short";
   else ui.buzz = "Buzz: 1 second";
-}
-function instructionLine() {
-  if (ui.screen === "ground") {
-    if ((ui.ground || 0) >= 5) return "Find a sound around you.";
-    if ((ui.ground || 0) >= 3) return "Find something to touch.";
-    return "Find something to see.";
-  }
-  if (ui.screen === "breath") return ui.breath ? "In, hold, out, hold." : "Press begin and breathe with me.";
-  if (ui.screen === "first") return "Do the first part, then the next.";
-  if (ui.screen === "sched") return "This block is now. Then the next.";
-  if (ui.screen === "zone") return "Pick what would help right now.";
-  if (ui.screen === "soothe") return "Pick a calming tool.";
-  if (ui.screen === "plan") return "Pick a tool.";
-  if (ui.screen === "race") return "Bridger walks for five minutes. He will wait.";
-  if (ui.screen === "ask") return "Tap what you need to ask.";
-  if (ui.screen === "express") return "Draw on the board or write.";
-  if (ui.screen === "feed") return "Did that help?";
-  if (ui.screen === "thermo") return "Slide to your feeling, then tap This is me.";
-  return "Hello. Show how you feel.";
 }
 function rowGeom(count) {
   const top = home() ? 56 : 64;
@@ -474,13 +454,32 @@ function showDetail(it) {
   paintStudent();
 }
 
+const HDR = 28;
+const HDR_MID = 50;
+function paintBattery(ctx) {
+  const pct = Math.max(0, Math.min(100, ui.battery));
+  const x = 710, y = 6, w = 28, h = 14;
+  const ink = pageInk();
+  const fill = pct <= 15 ? "#c44848" : (ui.dark ? "#7dcea0" : "#2f8f5b");
+  ctx.strokeStyle = ink;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x + 0.5, y + 0.5, w, h);
+  ctx.fillStyle = ink;
+  ctx.fillRect(x + w + 1, y + 4, 3, 6);
+  const inner = Math.round((w - 4) * pct / 100);
+  if (inner > 0) {
+    ctx.fillStyle = fill;
+    ctx.fillRect(x + 2, y + 2, inner, h - 4);
+  }
+  text(ctx, pct + "%", x + w + 12, y + h / 2, 14, ink, "left", "middle");
+}
 function paintHello() {
   sc.fillStyle = S.BG;
   sc.fillRect(0, 0, 800, 480);
   text(sc, "Hello, " + ui.name, 400, ui.grade <= 1 ? 150 : 170, 28, S.FG, "center");
   text(sc, "How big are your feelings?", 400, ui.grade <= 1 ? 210 : 230, 16, S.FG, "center");
   footer(sc);
-  gear(sc, 732, 8, 56, 44);
+  gear(sc, 732, HDR, 56, 44);
 }
 function paintList() {
   const g = rowGeom(ui.items.length);
@@ -488,7 +487,7 @@ function paintList() {
   sc.fillStyle = S.BG;
   sc.fillRect(0, 0, 800, 480);
   text(sc, ui.title, 24, 32, ui.grade === 3 ? 16 : 26, S.FG, "left");
-  if (ui.crumbs.length) roundRect(sc, 584, 8, 140, 44, 8, S.ROW), text(sc, "Back", 654, 30, 16, S.FG, "center");
+  if (ui.crumbs.length) roundRect(sc, 584, HDR, 140, 44, 8, S.ROW), text(sc, "Back", 654, HDR_MID, 16, S.FG, "center");
   ui.items.forEach((it, i) => {
     const y = g.top + i * (g.h + 6);
     const fill = it.action === OPEN || it.action === DRAW ? S.ROW : asks(it) ? S.ASK : S.TRY;
@@ -510,14 +509,14 @@ function paintList() {
     }
   });
   footer(sc);
-  gear(sc, 732, 8, 56, 44);
+  gear(sc, 732, HDR, 56, 44);
 }
 function paintDetail() {
   const it = ui.open;
   sc.fillStyle = S.BG;
   sc.fillRect(0, 0, 800, 480);
-  roundRect(sc, 584, 8, 140, 44, 8, S.ROW);
-  text(sc, "Back", 654, 30, 16, S.FG, "center");
+  roundRect(sc, 584, HDR, 140, 44, 8, S.ROW);
+  text(sc, "Back", 654, HDR_MID, 16, S.FG, "center");
   const band = asks(it) ? S.ASK : S.TRY;
   const banner = ui.grade === 0 ? (asks(it) ? "Ask" : "Try") : (asks(it) ? "Ask my teacher" : "Try this");
   roundRect(sc, 24, 64, 752, 64, 12, band);
@@ -534,7 +533,7 @@ function paintDetail() {
   if (it.action === BREATHE && ui.breath) {
     paintBreathExercise();
     footer(sc);
-    gear(sc, 732, 8, 56, 44);
+    gear(sc, 732, HDR, 56, 44);
     return;
   }
   if (it.action === BREATHE) {
@@ -542,7 +541,7 @@ function paintDetail() {
     text(sc, "Begin", 400, 366, 18, S.FG, "center");
   }
   footer(sc);
-  gear(sc, 732, 8, 56, 44);
+  gear(sc, 732, HDR, 56, 44);
 }
 function paintBreathExercise() {
   const into = Date.now() - ui.breathStart;
@@ -636,8 +635,8 @@ function paintToolsPick() {
   sc.fillStyle = S.BG;
   sc.fillRect(0, 0, 800, 480);
   text(sc, "Tools for this student", 24, 30, 26, S.FG, "left");
-  roundRect(sc, 648, 8, 140, 44, 8, S.ROW);
-  text(sc, "Back", 718, 30, 16, S.FG, "center");
+  roundRect(sc, 648, HDR, 140, 44, 8, S.ROW);
+  text(sc, "Back", 718, HDR_MID, 16, S.FG, "center");
   TOOLS.forEach((tool, i) => {
     const y = 80 + i * 70;
     roundRect(sc, 24, y, 752, 58, 12, S.ROW);
@@ -663,8 +662,8 @@ function paintOrder() {
   sc.fillStyle = S.BG;
   sc.fillRect(0, 0, 800, 480);
   text(sc, "Strategy order", 24, 30, 22, S.FG, "left");
-  roundRect(sc, 648, 8, 140, 44, 8, S.ROW);
-  text(sc, "Back", 718, 30, 16, S.FG, "center");
+  roundRect(sc, 648, HDR, 140, 44, 8, S.ROW);
+  text(sc, "Back", 718, HDR_MID, 16, S.FG, "center");
   ui.order.forEach((index, i) => {
     const y = 80 + i * 70;
     roundRect(sc, 24, y, 752, 58, 12, S.ROW);
@@ -679,8 +678,8 @@ function paintAccPick() {
   sc.fillStyle = S.BG;
   sc.fillRect(0, 0, 800, 480);
   text(sc, "Accommodations", 24, 30, 18, S.FG, "left");
-  roundRect(sc, 648, 8, 140, 44, 8, S.ROW);
-  text(sc, "Back", 718, 30, 16, S.FG, "center");
+  roundRect(sc, 648, HDR, 140, 44, 8, S.ROW);
+  text(sc, "Back", 718, HDR_MID, 16, S.FG, "center");
   ACC.forEach((name, i) => {
     const y = 56 + i * 40;
     roundRect(sc, 24, y, 752, 36, 8, S.ROW);
@@ -734,8 +733,8 @@ function paintFirstPick() {
   sc.fillStyle = S.BG;
   sc.fillRect(0, 0, 800, 480);
   text(sc, "First, then", 24, 30, 16, S.FG, "left");
-  roundRect(sc, 648, 8, 140, 44, 8, S.ROW);
-  text(sc, "Back", 718, 30, 16, S.FG, "center");
+  roundRect(sc, 648, HDR, 140, 44, 8, S.ROW);
+  text(sc, "Back", 718, HDR_MID, 16, S.FG, "center");
   const side = ui.firstSide ? 1 : 0;
   [[16, "First", ui.first, side === 0], [408, "Then", ui.then, side === 1]].forEach(([x, label, word, on]) => {
     roundRect(sc, x, 58, 376, 148, 16, on ? S.TRY : S.ROW);
@@ -748,8 +747,8 @@ function paintSchedPick() {
   sc.fillStyle = S.BG;
   sc.fillRect(0, 0, 800, 480);
   text(sc, "Schedule", 24, 30, 16, S.FG, "left");
-  roundRect(sc, 648, 8, 140, 44, 8, S.ROW);
-  text(sc, "Back", 718, 30, 16, S.FG, "center");
+  roundRect(sc, 648, HDR, 140, 44, 8, S.ROW);
+  text(sc, "Back", 718, HDR_MID, 16, S.FG, "center");
   const edit = ui.schedEdit || 0;
   ui.steps.forEach((step, i) => {
     const x = schedX(i);
@@ -762,12 +761,12 @@ function paintSchedPick() {
 function paintBreathPage() {
   sc.fillStyle = S.BG;
   sc.fillRect(0, 0, 800, 480);
-  roundRect(sc, 584, 8, 140, 44, 8, S.ROW);
-  text(sc, "Back", 654, 30, 16, S.FG, "center");
+  roundRect(sc, 584, HDR, 140, 44, 8, S.ROW);
+  text(sc, "Back", 654, HDR_MID, 16, S.FG, "center");
   if (ui.breath) {
     paintBreathExercise();
     footer(sc);
-    gear(sc, 732, 8, 56, 44);
+    gear(sc, 732, HDR, 56, 44);
     return;
   }
   if (ui.breathOffer) {
@@ -782,27 +781,27 @@ function paintBreathPage() {
     text(sc, "Begin", 400, 366, 22, S.FG, "center");
   }
   footer(sc);
-  gear(sc, 732, 8, 56, 44);
+  gear(sc, 732, HDR, 56, 44);
 }
 function paintSettings() {
   sc.fillStyle = S.BG;
   sc.fillRect(0, 0, 800, 480);
   text(sc, "Settings", 24, 30, 26, S.FG, "left");
-  roundRect(sc, 220, 8, 150, 44, 8, S.ROW);
-  text(sc, "Student tools", 295, 30, 14, S.FG, "center");
-  roundRect(sc, 380, 8, 100, 44, 8, ui.dark ? S.FOOT : S.TRY);
-  text(sc, "Light", 430, 30, 14, ui.dark ? S.FG : "#111", "center");
-  roundRect(sc, 488, 8, 100, 44, 8, ui.dark ? S.TRY : S.FOOT);
-  text(sc, "Dark", 538, 30, 14, ui.dark ? "#e6e6e6" : S.FG, "center");
-  roundRect(sc, 648, 8, 140, 44, 8, S.TRY);
-  text(sc, "Done", 718, 30, 16, S.FG, "center");
-  roundRect(sc, 24, 60, 752, 56, 12, S.ROW);
-  text(sc, "Student", 44, 78, 14, S.FG, "left");
-  text(sc, ui.name, 150, 78, 18, S.FG, "left");
-  text(sc, "Teacher", 44, 100, 14, S.FG, "left");
-  text(sc, ui.teacherName, 150, 100, 18, S.FG, "left");
-  roundRect(sc, 636, 68, 128, 40, 8, S.TRY);
-  text(sc, "Change", 700, 88, 16, S.FG, "center");
+  roundRect(sc, 220, HDR, 150, 44, 8, S.ROW);
+  text(sc, "Student tools", 295, HDR_MID, 14, S.FG, "center");
+  roundRect(sc, 380, HDR, 100, 44, 8, ui.dark ? S.FOOT : S.TRY);
+  text(sc, "Light", 430, HDR_MID, 14, ui.dark ? S.FG : "#111", "center");
+  roundRect(sc, 488, HDR, 100, 44, 8, ui.dark ? S.TRY : S.FOOT);
+  text(sc, "Dark", 538, HDR_MID, 14, ui.dark ? "#e6e6e6" : S.FG, "center");
+  roundRect(sc, 648, HDR, 140, 44, 8, S.TRY);
+  text(sc, "Done", 718, HDR_MID, 16, S.FG, "center");
+  roundRect(sc, 24, 80, 752, 56, 12, S.ROW);
+  text(sc, "Student", 44, 98, 14, S.FG, "left");
+  text(sc, ui.name, 150, 98, 18, S.FG, "left");
+  text(sc, "Teacher", 44, 120, 14, S.FG, "left");
+  text(sc, ui.teacherName, 150, 120, 18, S.FG, "left");
+  roundRect(sc, 636, 88, 128, 40, 8, S.TRY);
+  text(sc, "Change", 700, 108, 16, S.FG, "center");
   text(sc, "Brightness  " + ui.bright + "%", 24, 140, 16, S.FG, "left", "top");
   roundRect(sc, 24, 164, 56, 40, 8, S.ROW);
   roundRect(sc, 720, 164, 56, 40, 8, S.ROW);
@@ -832,11 +831,11 @@ function paintKeys() {
   const action = ui.typeMode === "message" ? "Send" : "Save";
   text(sc, title, 24, 30, 16, S.FG, "left");
   paintExpressClock();
-  roundRect(sc, 500, 8, 140, 44, 8, S.ROW);
-  text(sc, "Back", 570, 30, 16, S.FG, "center");
-  roundRect(sc, 648, 8, 140, 44, 8, ui.typed ? S.TRY : S.ROW);
-  text(sc, action, 718, 30, 16, S.FG, "center");
-  roundRect(sc, 24, 68, 752, 64, 12, S.ROW);
+  roundRect(sc, 500, HDR, 140, 44, 8, S.ROW);
+  text(sc, "Back", 570, HDR_MID, 16, S.FG, "center");
+  roundRect(sc, 648, HDR, 140, 44, 8, ui.typed ? S.TRY : S.ROW);
+  text(sc, action, 718, HDR_MID, 16, S.FG, "center");
+  roundRect(sc, 24, 80, 752, 64, 12, S.ROW);
   text(sc, ui.typed || "Tap letters below", 44, 100, ui.typed ? 24 : 16, S.FG, "left");
   const rows = ["QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"];
   rows.forEach((row, r) => {
@@ -857,10 +856,10 @@ function paintKeys() {
 function paintWrite() {
   sc.fillStyle = "#fff";
   sc.fillRect(0, 0, 800, 480);
-  roundRect(sc, 500, 8, 140, 44, 8, S.ROW);
-  text(sc, "Back", 570, 30, 16, S.FG, "center");
-  roundRect(sc, 648, 8, 140, 44, 8, S.TRY);
-  text(sc, "Done", 718, 30, 16, "#000", "center");
+  roundRect(sc, 500, HDR, 140, 44, 8, S.ROW);
+  text(sc, "Back", 570, HDR_MID, 16, S.FG, "center");
+  roundRect(sc, 648, HDR, 140, 44, 8, S.TRY);
+  text(sc, "Done", 718, HDR_MID, 16, "#000", "center");
   text(sc, "Notebook", 24, 32, 16, "#111", "left");
   paintExpressClock();
   ui.write.forEach((line, i) => {
@@ -880,7 +879,7 @@ function paintDrawMenu() {
   paintExpressClock();
   const labels = ["Graph Board - Digital Pencil", "White Board - Digital Marker", "Chalk Board - Digital Chalk"];
   const fills = ["#fff", "#fff", rgb(0x13A4)];
-  const inks = [S.FG, S.FG, "#fff"];
+  const inks = ["#111", "#111", "#fff"];
   [82, 190, 298].forEach((y, i) => {
     roundRect(sc, 24, y, 752, 96, 12, fills[i]);
     text(sc, labels[i], 400, y + 48, 22, inks[i], "center");
@@ -908,7 +907,7 @@ function paintDraw() {
   sc.fillStyle = surface;
   sc.fillRect(0, 0, 800, 480);
   sc.fillStyle = chalk ? rgb(0x13A4) : S.BG;
-  sc.fillRect(0, 0, 800, 108);
+  sc.fillRect(0, 0, 800, 120);
   const button = chalk ? "#fff" : S.ROW;
   const ink = chalk ? "#111" : S.FG;
   [["Back", 8, 82], ["Save", 98, 80], ["Reset", 192, 104], ["New", 310, 96], ["Read", 410, 88]].forEach(([name, x, w]) => {
@@ -919,20 +918,20 @@ function paintDraw() {
   if (chalk) {
     CHALK.forEach((c, i) => {
       const x = CHALK_X[i];
-      roundRect(sc, x, 58, 90, 36, 8, c.fill);
-      text(sc, c.name, x + 45, 76, 14, c.ink, "center");
+      roundRect(sc, x, 76, 90, 36, 8, c.fill);
+      text(sc, c.name, x + 45, 94, 14, c.ink, "center");
       if (i === ui.chalk) {
         sc.strokeStyle = "#fff";
         sc.lineWidth = 2;
-        sc.strokeRect(x + 2, 60, 86, 32);
+        sc.strokeRect(x + 2, 78, 86, 32);
       }
     });
   }
   if (ui.board === 0) {
     sc.strokeStyle = "#212421";
     sc.lineWidth = 1;
-    for (let x = 0; x < 800; x += 20) { sc.beginPath(); sc.moveTo(x, 108); sc.lineTo(x, 419); sc.stroke(); }
-    for (let y = 108; y < 420; y += 20) { sc.beginPath(); sc.moveTo(0, y); sc.lineTo(799, y); sc.stroke(); }
+    for (let x = 0; x < 800; x += 20) { sc.beginPath(); sc.moveTo(x, 120); sc.lineTo(x, 419); sc.stroke(); }
+    for (let y = 120; y < 420; y += 20) { sc.beginPath(); sc.moveTo(0, y); sc.lineTo(799, y); sc.stroke(); }
   }
   sc.lineCap = "round";
   ui.strokes.forEach((s) => {
@@ -1038,51 +1037,37 @@ function paintThermo() {
     sc.fillStyle = ZONES[i].color;
     sc.fillRect(tubeX, y, tubeW, h);
   }
-  sc.strokeStyle = "#fff";
-  sc.lineWidth = 2;
-  sc.beginPath();
-  sc.roundRect(tubeX - 3, top - 3, tubeW + 6, bottom - top + 6, tubeW / 2 + 3);
-  sc.stroke();
-  const bulbY = bottom + 46 - 16;
+  const neck = Math.max(8, band / 4);
+  const bulbY = bottom - band + neck + 46;
   sc.fillStyle = ZONES[0].color;
   sc.beginPath();
   sc.arc(cx, bulbY, 46, 0, Math.PI * 2);
   sc.fill();
-  sc.fillRect(tubeX, bottom - 8, tubeW, 16);
-  sc.stroke();
-  for (let y = top + 14; y < bottom - 4; y += 8) {
-    const len = (Math.round((y - top) / 8) % 3 === 0) ? 16 : 8;
-    sc.beginPath();
-    sc.moveTo(tubeX + tubeW + 8, y);
-    sc.lineTo(tubeX + tubeW + 8 + len, y);
-    sc.stroke();
-  }
   ZONES.forEach((zone, i) => {
     const mid = bottom - (i + 0.5) * band;
     const selected = i === ui.zone;
-    sc.strokeStyle = "#fff";
-    sc.beginPath();
-    sc.moveTo(tubeX + tubeW + 4, mid);
-    sc.lineTo(328, mid);
-    sc.stroke();
-    roundRect(sc, 328, mid - 17, 196, 34, 12, selected ? zone.color : "#fff");
-    sc.strokeStyle = selected ? "#fff" : pageBg();
-    sc.lineWidth = 2;
-    sc.beginPath();
-    sc.roundRect(328, mid - 17, 196, 34, 12);
-    sc.stroke();
-    text(sc, zone.name, 426, mid, 16, selected ? zone.ink : "#000", "center");
+    if (selected) roundRect(sc, 328, mid - 21, 196, 42, 21, zone.color);
+    text(sc, zone.name, 426, mid, 22, selected ? zone.ink : "#000", "center");
   });
   roundRect(sc, 500, 360, 270, 52, 12, ZONES[ui.zone].color);
   text(sc, "This is me", 635, 386, 24, ZONES[ui.zone].ink, "center");
   footer(sc);
-  gear(sc, 732, 8, 56, 44);
+  gear(sc, 732, HDR, 56, 44);
 }
 const HUB_Y1 = 128, HUB_Y2 = 260, HUB_H = 120, HUB_W = 372;
+function hubMark(ch, x, y) {
+  sc.save();
+  sc.font = '36px "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif';
+  sc.textAlign = "center";
+  sc.textBaseline = "middle";
+  sc.fillText(ch, x, y);
+  sc.restore();
+}
 function hubCard(x, y, w, h, fill, title, about) {
   roundRect(sc, x, y, w, h, 22, fill);
-  text(sc, title, x + w / 2, y + 72, 26, ui.dark ? "#e6e6e6" : "#111", "center");
-  text(sc, about, x + w / 2, y + 98, 14, ui.dark ? "#b0b8c0" : "#666", "center");
+  const warm = fill === "#fbf6ec" || fill === "#eec28c";
+  text(sc, title, x + w / 2, y + 72, 26, warm || !ui.dark ? "#111" : "#e6e6e6", "center");
+  text(sc, about, x + w / 2, y + 98, 14, warm || !ui.dark ? "#666" : "#b0b8c0", "center");
 }
 function paintZone() {
   sc.fillStyle = pageBg();
@@ -1091,22 +1076,22 @@ function paintZone() {
   text(sc, "Hello, " + ui.name + "!", 24, 64, 16, ui.dark ? "#9aa3ad" : "#666", "left");
   text(sc, "What would help you right now?", 24, 104, 26, pageInk(), "left");
   hubCard(20, HUB_Y1, HUB_W, HUB_H, cardFill("#e7f4ee"), "Feel Better", "Breathing and calming tools");
-  if (!ui.calm) text(sc, "♡", 206, HUB_Y1 + 32, 22, "#2f7d55", "center");
+  if (!ui.calm) hubMark("💚", 206, HUB_Y1 + 28);
   hubCard(408, HUB_Y1, HUB_W, HUB_H, cardFill("#fbf6ec"), "Ask for Help", "Tell your teacher what you need");
-  if (!ui.calm) text(sc, "✋", 594, HUB_Y1 + 32, 22, "#111", "center");
+  if (!ui.calm) hubMark("✋", 594, HUB_Y1 + 28);
   if (ui.express) {
     hubCard(20, HUB_Y2, HUB_W, HUB_H, cardFill("#eee9f6"), "Draw or Write", "Express yourself another way");
-    if (!ui.calm) text(sc, "✎", 206, HUB_Y2 + 32, 22, "#111", "center");
+    if (!ui.calm) hubMark("✏️", 206, HUB_Y2 + 28);
     hubCard(408, HUB_Y2, HUB_W, HUB_H, cardFill("#e7f3fb"), "Tools", "Race, schedule, and first then");
     if (!ui.calm) drawToolbox(408 + HUB_W / 2, HUB_Y2 + 28);
   } else {
     hubCard(20, HUB_Y2, 760, HUB_H, cardFill("#e7f3fb"), "Tools", "Race, schedule, and first then");
     if (!ui.calm) drawToolbox(400, HUB_Y2 + 28);
   }
-  roundRect(sc, 584, 8, 140, 44, 8, S.ROW);
-  text(sc, "Back", 654, 30, 16, S.FG, "center");
+  roundRect(sc, 584, HDR, 140, 44, 8, S.ROW);
+  text(sc, "Back", 654, HDR_MID, 16, S.FG, "center");
   footer(sc);
-  gear(sc, 732, 8, 56, 44);
+  gear(sc, 732, HDR, 56, 44);
 }
 function paintSoothe() {
   sc.fillStyle = pageBg();
@@ -1119,10 +1104,10 @@ function paintSoothe() {
     roundRect(sc, 24, y, 752, 44, 16, cardFill("#e7f4ee"));
     text(sc, tool.name, 44, y + 22, 22, ui.dark ? "#e6e6e6" : "#111", "left");
   });
-  roundRect(sc, 584, 8, 140, 44, 8, S.ROW);
-  text(sc, "Back", 654, 30, 16, S.FG, "center");
+  roundRect(sc, 584, HDR, 140, 44, 8, S.ROW);
+  text(sc, "Back", 654, HDR_MID, 16, S.FG, "center");
   footer(sc);
-  gear(sc, 732, 8, 56, 44);
+  gear(sc, 732, HDR, 56, 44);
 }
 function paintPlan() {
   sc.fillStyle = pageBg();
@@ -1138,10 +1123,10 @@ function paintPlan() {
   const raceY = 124 + rows.length * 50;
   roundRect(sc, 24, raceY, 752, 44, 16, cardFill("#e7f3fb"));
   text(sc, "Race Bridger", 44, raceY + 22, 22, ui.dark ? "#e6e6e6" : "#111", "left");
-  roundRect(sc, 584, 8, 140, 44, 8, S.ROW);
-  text(sc, "Back", 654, 30, 16, S.FG, "center");
+  roundRect(sc, 584, HDR, 140, 44, 8, S.ROW);
+  text(sc, "Back", 654, HDR_MID, 16, S.FG, "center");
   footer(sc);
-  gear(sc, 732, 8, 56, 44);
+  gear(sc, 732, HDR, 56, 44);
 }
 const RACE_MS = 5 * 60 * 1000;
 function expressCounts() {
@@ -1169,12 +1154,12 @@ function paintExpressClock() {
   if (!ui.expressOn) return;
   const clock = expressClock();
   if (ui.screen === "draw" && ui.board === 2) {
-    roundRect(sc, 624, 8, 164, 44, 10, "#fff");
-    text(sc, clock, 706, 30, 22, "#111", "center");
+    roundRect(sc, 624, HDR, 164, 44, 10, "#fff");
+    text(sc, clock, 706, HDR_MID, 22, "#111", "center");
   } else if (ui.screen === "draw") {
     text(sc, clock, 784, 450, 16, S.FG, "right");
   } else if (ui.screen === "drawmenu") {
-    text(sc, clock, 784, 30, 16, S.FG, "right");
+    text(sc, clock, 784, HDR_MID, 16, S.FG, "right");
   } else if (ui.screen === "keys" || ui.screen === "write") {
     text(sc, clock, 200, ui.screen === "write" ? 32 : 30, 16, "#111", "left");
   } else {
@@ -1220,10 +1205,10 @@ function paintRace() {
     roundRect(sc, 24, 320, 752, 56, 12, cardFill("#e7f4ee"));
     text(sc, ui.raceDone ? "Again" : "Start", 400, 348, 24, "#111", "center");
   }
-  roundRect(sc, 584, 8, 140, 44, 8, S.ROW);
-  text(sc, "Back", 654, 30, 16, S.FG, "center");
+  roundRect(sc, 584, HDR, 140, 44, 8, S.ROW);
+  text(sc, "Back", 654, HDR_MID, 16, S.FG, "center");
   footer(sc);
-  gear(sc, 732, 8, 56, 44);
+  gear(sc, 732, HDR, 56, 44);
 }
 function paintAsk() {
   sc.fillStyle = pageBg();
@@ -1238,12 +1223,12 @@ function paintAsk() {
   aids.forEach((name, i) => {
     const y = 128 + i * (h + gap);
     roundRect(sc, 24, y, 752, h, 12, cardFill("#fbf6ec"));
-    text(sc, name, 44, y + h / 2, 16, ui.dark ? "#e6e6e6" : "#111", "left");
+    text(sc, name, 44, y + h / 2, 16, "#111", "left");
   });
-  roundRect(sc, 584, 8, 140, 44, 8, S.ROW);
-  text(sc, "Back", 654, 30, 16, S.FG, "center");
+  roundRect(sc, 584, HDR, 140, 44, 8, S.ROW);
+  text(sc, "Back", 654, HDR_MID, 16, S.FG, "center");
   footer(sc);
-  gear(sc, 732, 8, 56, 44);
+  gear(sc, 732, HDR, 56, 44);
 }
 function paintExpress() {
   sc.fillStyle = "#fff";
@@ -1255,10 +1240,11 @@ function paintExpress() {
   text(sc, "Chalkboard", 206, 250, 26, "#fff", "center");
   text(sc, "Draw with chalk", 206, 286, 16, "#fff", "center");
   hubCard(412, 150, 364, 220, "#eee9f6", "Notebook", "Type a few lines");
-  roundRect(sc, 584, 8, 140, 44, 8, S.ROW);
-  text(sc, "Back", 654, 30, 16, S.FG, "center");
+  if (!ui.calm) hubMark("✏️", 594, 178);
+  roundRect(sc, 584, HDR, 140, 44, 8, S.ROW);
+  text(sc, "Back", 654, HDR_MID, 16, S.FG, "center");
   footer(sc);
-  gear(sc, 732, 8, 56, 44);
+  gear(sc, 732, HDR, 56, 44);
 }
 function paintFeed() {
   sc.fillStyle = pageBg();
@@ -1272,7 +1258,7 @@ function paintFeed() {
   });
   text(sc, teacherLabel() === "Teacher" ? "I need my teacher" : "I need " + teacherLabel(), 400, 340, 26, pageInk(), "center");
   footer(sc);
-  gear(sc, 732, 8, 56, 44);
+  gear(sc, 732, HDR, 56, 44);
 }
 const SEE_LOOKS = ["green", "blue", "red", "yellow", "round", "pointy", "shiny", "soft", "big", "small"];
 function pickSeeLooks() {
@@ -1311,10 +1297,10 @@ function paintGround() {
   if (progress) text(sc, progress, 400, 222, 16, S.FG, "center");
   roundRect(sc, 175, 268, 450, 72, 12, S.TRY);
   text(sc, button, 400, 304, 24, S.FG, "center");
-  roundRect(sc, 584, 8, 140, 44, 8, S.ROW);
-  text(sc, "Back", 654, 30, 16, S.FG, "center");
+  roundRect(sc, 584, HDR, 140, 44, 8, S.ROW);
+  text(sc, "Back", 654, HDR_MID, 16, S.FG, "center");
   footer(sc);
-  gear(sc, 732, 8, 56, 44);
+  gear(sc, 732, HDR, 56, 44);
 }
 function paintFirst() {
   sc.fillStyle = S.BG;
@@ -1327,10 +1313,10 @@ function paintFirst() {
   text(sc, ui.then || "Break", 48, 268, 28, "#000", "left");
   roundRect(sc, 24, 338, 752, 52, 12, "#e7f4ee");
   text(sc, "I did it", 400, 364, 22, "#111", "center");
-  roundRect(sc, 584, 8, 140, 44, 8, S.ROW);
-  text(sc, "Back", 654, 30, 16, S.FG, "center");
+  roundRect(sc, 584, HDR, 140, 44, 8, S.ROW);
+  text(sc, "Back", 654, HDR_MID, 16, S.FG, "center");
   footer(sc);
-  gear(sc, 732, 8, 56, 44);
+  gear(sc, 732, HDR, 56, 44);
 }
 function paintSched() {
   const steps = ui.steps || ["Arrive", "Learn", "Break", "Pack up"];
@@ -1347,15 +1333,16 @@ function paintSched() {
   roundRect(sc, 520, 292, 256, 72, 12, "#e7f4ee");
   text(sc, "Next activity", 264, 328, 22, "#000", "center");
   text(sc, "I did it", 648, 328, 22, "#111", "center");
-  roundRect(sc, 584, 8, 140, 44, 8, S.ROW);
-  text(sc, "Back", 654, 30, 16, S.FG, "center");
+  roundRect(sc, 584, HDR, 140, 44, 8, S.ROW);
+  text(sc, "Back", 654, HDR_MID, 16, S.FG, "center");
   footer(sc);
-  gear(sc, 732, 8, 56, 44);
+  gear(sc, 732, HDR, 56, 44);
 }
 function paintStudent() {
   applyLook();
   if (ui.screen === "lock") {
     paintPad(sc, 800, "Class PIN", "Preview PIN 2580", ui.pinEntry, S.BG, S.FG, S.ROW);
+    paintBattery(sc);
     return;
   }
   if (ui.screen === "spass") {
@@ -1363,28 +1350,34 @@ function paintStudent() {
       ? "Enter the settings password"
       : (ui.passStep === "again" ? "Enter that password again" : "Choose a password students do not know");
     paintPad(sc, 800, "Settings", note, ui.pinEntry, S.BG, S.FG, S.ROW);
-    roundRect(sc, 584, 8, 140, 44, 8, S.ROW);
-    text(sc, "Back", 654, 30, 16, S.FG, "center");
+    roundRect(sc, 584, HDR, 140, 44, 8, S.ROW);
+    text(sc, "Back", 654, HDR_MID, 16, S.FG, "center");
+    paintBattery(sc);
     return;
   }
   if (ui.screen === "stools") {
     paintToolsPick();
+    paintBattery(sc);
     return;
   }
   if (ui.screen === "firstpick") {
     paintFirstPick();
+    paintBattery(sc);
     return;
   }
   if (ui.screen === "schedpick") {
     paintSchedPick();
+    paintBattery(sc);
     return;
   }
   if (ui.screen === "accpick") {
     paintAccPick();
+    paintBattery(sc);
     return;
   }
   if (ui.screen === "order") {
     paintOrder();
+    paintBattery(sc);
     return;
   }
   if (ui.screen === "thermo") paintThermo();
@@ -1407,6 +1400,7 @@ function paintStudent() {
   else if (ui.screen === "write") paintWrite();
   else if (ui.screen === "drawmenu") paintDrawMenu();
   else if (ui.screen === "draw") paintDraw();
+  paintBattery(sc);
 }
 
 function teacherTone() {
@@ -1419,8 +1413,8 @@ function teacherTone() {
 function smallGear(ctx) {
   const btn = ui.teacherDark ? "#4a5560" : "#dedede";
   const metal = ui.teacherDark ? "#d5dbe0" : "#5c6570";
-  roundRect(ctx, 200, 2, 36, 32, 8, btn);
-  const cx = 218, cy = 18;
+  roundRect(ctx, 200, 18, 36, 32, 8, btn);
+  const cx = 218, cy = 34;
   ctx.fillStyle = metal;
   for (let i = 0; i < 8; i++) {
     const a = i * Math.PI / 4;
@@ -1436,6 +1430,15 @@ function smallGear(ctx) {
   ctx.arc(cx, cy, 2.4, 0, Math.PI * 2);
   ctx.fill();
 }
+function paintTeacherBattery(ctx, x, y) {
+  const ink = teacherTone().FG;
+  ctx.strokeStyle = ink;
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(x + 0.5, y + 0.5, 18, 10);
+  ctx.fillStyle = ink;
+  ctx.fillRect(x + 18, y + 3, 2, 4);
+  text(ctx, "USB", x + 24, y + 5, 12, ink, "left", "middle");
+}
 function dimTeacher() {
   const t = (ui.teacherBright - 20) / 80;
   const alpha = 0.38 - 0.28 * t;
@@ -1449,6 +1452,7 @@ function paintTeacherLook() {
   roundRect(tc, 148, 8, 80, 36, 8, C.TRY);
   text(tc, "Done", 188, 26, 16, C.FG, "center");
   text(tc, "Look", 12, 26, 22, C.FG, "left");
+  paintTeacherBattery(tc, 88, 6);
   text(tc, "Brightness", 12, 68, 16, C.FG, "left", "top");
   roundRect(tc, 8, 86, 36, 36, 8, C.FOOT);
   roundRect(tc, 196, 86, 36, 36, 8, C.FOOT);
@@ -1475,6 +1479,7 @@ function paintTeacher() {
     const note = ui.teacherStep === "code" ? "Preview code 1469" : "Preview PIN 2580";
     paintPad(tc, 240, title, note, ui.teacherEntry, C.BG, C.FG, C.FOOT);
     smallGear(tc);
+    paintTeacherBattery(tc, 176, 2);
     dimTeacher();
     return;
   }
@@ -1492,6 +1497,7 @@ function paintTeacher() {
   if (!ui.queue.length) {
     text(tc, "Waiting for a student", 12, 36, 14, C.FG, "left", "top");
     smallGear(tc);
+    paintTeacherBattery(tc, 176, 2);
     dimTeacher();
     return;
   }
@@ -1500,7 +1506,7 @@ function paintTeacher() {
   tc.fillStyle = band;
   tc.fillRect(0, 0, 240, 36);
   text(tc, note.asks ? "Ask" : "Try", 12, 18, 14, C.FG, "left");
-  text(tc, (ui.view + 1) + " of " + ui.queue.length, 194, 18, 14, C.FG, "right");
+  text(tc, (ui.view + 1) + " of " + ui.queue.length, 168, 18, 14, C.FG, "right");
   text(tc, note.student, 12, 58, 22, C.FG, "left");
   text(tc, "Issue", 12, 100, 14, C.FG, "left", "top");
   text(tc, note.feeling, 12, 122, 14, C.FG, "left", "top");
@@ -1509,6 +1515,7 @@ function paintTeacher() {
   if (ui.buzz) text(tc, ui.buzz, 12, 252, 12, C.FG, "left", "top");
   text(tc, "Seen", 228, 252, 12, C.FG, "right", "top");
   smallGear(tc);
+  paintTeacherBattery(tc, 176, 2);
   dimTeacher();
 }
 
@@ -1550,7 +1557,7 @@ function clickStudent(x, y) {
     return;
   }
   if (ui.screen === "spass") {
-    if (hit(x, y, 584, 8, 140, 44)) {
+    if (hit(x, y, 584, HDR, 140, 44)) {
       ui.pinEntry = "";
       ui.screen = ui.returnScreen || "thermo";
     } else {
@@ -1595,16 +1602,11 @@ function clickStudent(x, y) {
     paintTeacher();
     return;
   }
-  if (hasHelp() && hit(x, y, 112, 424, 108, 48)) {
-    bridgerSay(instructionLine());
-    paintStudent();
-    return;
-  }
   if (ui.screen === "hello") {
-    if (hit(x, y, 732, 8, 56, 44)) openSettingsGate();
+    if (hit(x, y, 732, HDR, 56, 44)) openSettingsGate();
     else { bridgerSay(ZONE_LINES[ui.zone]); ui.screen = "thermo"; }
   } else if (ui.screen === "thermo") {
-    if (hit(x, y, 732, 8, 56, 44)) openSettingsGate();
+    if (hit(x, y, 732, HDR, 56, 44)) openSettingsGate();
     else if (hit(x, y, 500, 360, 270, 52)) {
       const zone = ZONES[ui.zone];
       if (zone.tell) {
@@ -1624,15 +1626,15 @@ function clickStudent(x, y) {
       bridgerSay(ZONE_LINES[ui.zone]);
     }
   } else if (ui.screen === "zone") {
-    if (hit(x, y, 732, 8, 56, 44)) openSettingsGate();
-    else if (hit(x, y, 584, 8, 140, 44)) ui.screen = "thermo";
+    if (hit(x, y, 732, HDR, 56, 44)) openSettingsGate();
+    else if (hit(x, y, 584, HDR, 140, 44)) ui.screen = "thermo";
     else if (hit(x, y, 20, HUB_Y1, HUB_W, HUB_H)) { bridgerSay("Let's calm down."); ui.screen = "soothe"; }
     else if (hit(x, y, 408, HUB_Y1, HUB_W, HUB_H)) { bridgerSay("I can ask for you."); ui.screen = "ask"; }
     else if (ui.express && hit(x, y, 20, HUB_Y2, HUB_W, HUB_H)) { bridgerSay("Draw or write."); ui.screen = "express"; }
     else if (hit(x, y, ui.express ? 408 : 20, HUB_Y2, ui.express ? HUB_W : 760, HUB_H)) { bridgerSay("Pick a tool."); ui.screen = "plan"; }
   } else if (ui.screen === "soothe") {
-    if (hit(x, y, 732, 8, 56, 44)) openSettingsGate();
-    else if (hit(x, y, 584, 8, 140, 44)) ui.screen = "zone";
+    if (hit(x, y, 732, HDR, 56, 44)) openSettingsGate();
+    else if (hit(x, y, 584, HDR, 140, 44)) ui.screen = "zone";
     else {
       const offered = offeredTools().filter((tool) => tool.key === "ground" || tool.key === "breath");
       const row = Math.floor((y - 124) / 50);
@@ -1648,8 +1650,8 @@ function clickStudent(x, y) {
       }
     }
   } else if (ui.screen === "plan") {
-    if (hit(x, y, 732, 8, 56, 44)) openSettingsGate();
-    else if (hit(x, y, 584, 8, 140, 44)) ui.screen = "zone";
+    if (hit(x, y, 732, HDR, 56, 44)) openSettingsGate();
+    else if (hit(x, y, 584, HDR, 140, 44)) ui.screen = "zone";
     else {
       const rows = offeredTools().filter((tool) => tool.key === "first" || tool.key === "sched");
       const raceY = 124 + rows.length * 50;
@@ -1667,7 +1669,7 @@ function clickStudent(x, y) {
       }
     }
   } else if (ui.screen === "race") {
-    if (hit(x, y, 584, 8, 140, 44)) { ui.race = false; ui.screen = "plan"; }
+    if (hit(x, y, 584, HDR, 140, 44)) { ui.race = false; ui.screen = "plan"; }
     else if (!ui.race && hit(x, y, 24, 320, 752, 56)) {
       ui.race = true;
       ui.raceDone = false;
@@ -1675,8 +1677,8 @@ function clickStudent(x, y) {
       bridgerSay("I'll walk. You can race me.");
     }
   } else if (ui.screen === "ask") {
-    if (hit(x, y, 732, 8, 56, 44)) openSettingsGate();
-    else if (hit(x, y, 584, 8, 140, 44)) ui.screen = "zone";
+    if (hit(x, y, 732, HDR, 56, 44)) openSettingsGate();
+    else if (hit(x, y, 584, HDR, 140, 44)) ui.screen = "zone";
     else {
       const aids = approvedAcc();
       const gap = 4;
@@ -1694,12 +1696,12 @@ function clickStudent(x, y) {
       }
     }
   } else if (ui.screen === "express") {
-    if (hit(x, y, 732, 8, 56, 44)) openSettingsGate();
-    else if (hit(x, y, 584, 8, 140, 44)) { stopExpress(); ui.screen = "zone"; }
+    if (hit(x, y, 732, HDR, 56, 44)) openSettingsGate();
+    else if (hit(x, y, 584, HDR, 140, 44)) { stopExpress(); ui.screen = "zone"; }
     else if (hit(x, y, 24, 150, 364, 220)) { startExpress(); ui.board = 2; ui.fromExpress = true; bridgerSay("Make a picture."); ui.screen = "draw"; }
     else if (hit(x, y, 412, 150, 364, 220)) { startExpress(); ui.fromExpress = true; ui.write = ["", "", ""]; bridgerSay("Write a little."); ui.screen = "write"; }
   } else if (ui.screen === "feed") {
-    if (hit(x, y, 732, 8, 56, 44)) openSettingsGate();
+    if (hit(x, y, 732, HDR, 56, 44)) openSettingsGate();
     else if (hit(x, y, 24, 132, 236, 156)) { bridgerSay("Glad that helped."); ui.screen = "zone"; }
     else if (hit(x, y, 282, 132, 236, 156)) {
       ui.ground = 0;
@@ -1719,8 +1721,8 @@ function clickStudent(x, y) {
       paintTeacher();
     }
   } else if (ui.screen === "breath") {
-    if (hit(x, y, 732, 8, 56, 44)) { ui.breath = false; openSettingsGate(); }
-    else if (hit(x, y, 584, 8, 140, 44)) { ui.breath = false; ui.breathOffer = false; ui.screen = "soothe"; }
+    if (hit(x, y, 732, HDR, 56, 44)) { ui.breath = false; openSettingsGate(); }
+    else if (hit(x, y, 584, HDR, 140, 44)) { ui.breath = false; ui.breathOffer = false; ui.screen = "soothe"; }
     else if (!ui.breath && hit(x, y, 24, 336, 752, 60)) {
       ui.breathOffer = false;
       ui.breath = true;
@@ -1728,7 +1730,7 @@ function clickStudent(x, y) {
       bridgerSay("Nice and slow.");
     }
   } else if (ui.screen === "ground") {
-    if (hit(x, y, 584, 8, 140, 44)) ui.screen = "soothe";
+    if (hit(x, y, 584, HDR, 140, 44)) ui.screen = "soothe";
     else if (hit(x, y, 175, 268, 450, 72)) {
       ui.ground = (ui.ground || 0) + 1;
       if (ui.ground >= 6) { ui.lastCope = "ground"; bridgerSay("Did that help?"); ui.screen = "feed"; }
@@ -1737,15 +1739,15 @@ function clickStudent(x, y) {
       else bridgerSay("What do you see?");
     }
   } else if (ui.screen === "first") {
-    if (hit(x, y, 584, 8, 140, 44)) ui.screen = "plan";
+    if (hit(x, y, 584, HDR, 140, 44)) ui.screen = "plan";
     else if (hit(x, y, 24, 338, 752, 52)) { ui.lastCope = "first"; bridgerSay("Did that help?"); ui.screen = "feed"; }
   } else if (ui.screen === "sched") {
-    if (hit(x, y, 584, 8, 140, 44)) ui.screen = "plan";
+    if (hit(x, y, 584, HDR, 140, 44)) ui.screen = "plan";
     else if (hit(x, y, 520, 292, 256, 72)) { ui.lastCope = "sched"; bridgerSay("Did that help?"); ui.screen = "feed"; }
     else if (hit(x, y, 24, 292, 480, 72)) { ui.step = ((ui.step || 0) + 1) % 4; bridgerSay("On to the next one."); }
   } else if (ui.screen === "menu") {
-    if (hit(x, y, 732, 8, 56, 44)) openSettingsGate();
-    else if (ui.crumbs.length && hit(x, y, 584, 8, 140, 44)) { goBack(); return; }
+    if (hit(x, y, 732, HDR, 56, 44)) openSettingsGate();
+    else if (ui.crumbs.length && hit(x, y, 584, HDR, 140, 44)) { goBack(); return; }
     else {
       const g = rowGeom(ui.items.length);
       ui.items.forEach((it, i) => {
@@ -1754,26 +1756,26 @@ function clickStudent(x, y) {
       });
     }
   } else if (ui.screen === "detail") {
-    if (hit(x, y, 732, 8, 56, 44)) { ui.breath = false; openSettingsGate(); }
-    else if (hit(x, y, 584, 8, 140, 44)) { goBack(); return; }
+    if (hit(x, y, 732, HDR, 56, 44)) { ui.breath = false; openSettingsGate(); }
+    else if (hit(x, y, 584, HDR, 140, 44)) { goBack(); return; }
     else if (!ui.breath && ui.open && ui.open.action === BREATHE && hit(x, y, 24, 336, 752, 60)) {
       ui.breath = true;
       ui.breathStart = Date.now();
     }
   } else if (ui.screen === "settings") {
-    if (hit(x, y, 648, 8, 140, 44)) { ui.screen = ui.returnScreen || "hello"; }
-    else if (hit(x, y, 220, 8, 150, 44)) { ui.screen = "stools"; }
-    else if (hit(x, y, 380, 8, 100, 44)) { ui.dark = false; applyLook(); }
-    else if (hit(x, y, 488, 8, 100, 44)) { ui.dark = true; applyLook(); }
+    if (hit(x, y, 648, HDR, 140, 44)) { ui.screen = ui.returnScreen || "hello"; }
+    else if (hit(x, y, 220, HDR, 150, 44)) { ui.screen = "stools"; }
+    else if (hit(x, y, 380, HDR, 100, 44)) { ui.dark = false; applyLook(); }
+    else if (hit(x, y, 488, HDR, 100, 44)) { ui.dark = true; applyLook(); }
     else if (hit(x, y, 24, 90, 400, 28)) { ui.teacherName = ui.teacherName === "Teacher" ? "Ms Lopez" : "Teacher"; }
-    else if (hit(x, y, 24, 60, 752, 56)) { ui.typeMode = "name"; ui.typed = ui.name; ui.screen = "keys"; }
+    else if (hit(x, y, 24, 80, 752, 56)) { ui.typeMode = "name"; ui.typed = ui.name; ui.screen = "keys"; }
     else if (hit(x, y, 24, 164, 56, 40)) ui.bright = Math.max(20, ui.bright - 10);
     else if (hit(x, y, 720, 164, 56, 40)) ui.bright = Math.min(100, ui.bright + 10);
     else if (hit(x, y, 24, 426, 368, 46)) ui.bridger = !ui.bridger;
     else if (hit(x, y, 408, 426, 368, 46)) ui.express = !ui.express;
     else grades.forEach((_, i) => { if (hit(x, y, 24, 236 + i * 46, 752, 42)) ui.grade = i; });
   } else if (ui.screen === "stools") {
-    if (hit(x, y, 648, 8, 140, 44)) ui.screen = "settings";
+    if (hit(x, y, 648, HDR, 140, 44)) ui.screen = "settings";
     else if (hit(x, y, 470, 160, 136, 38)) { ui.firstSide = 0; ui.screen = "firstpick"; }
     else if (hit(x, y, 470, 230, 136, 38)) { ui.schedEdit = 0; ui.screen = "schedpick"; }
     else if (hit(x, y, 24, 424, 360, 44)) ui.screen = "order";
@@ -1786,7 +1788,7 @@ function clickStudent(x, y) {
       }
     }
   } else if (ui.screen === "firstpick") {
-    if (hit(x, y, 648, 8, 140, 44)) ui.screen = "stools";
+    if (hit(x, y, 648, HDR, 140, 44)) ui.screen = "stools";
     else if (hit(x, y, 16, 58, 376, 148)) ui.firstSide = 0;
     else if (hit(x, y, 408, 58, 376, 148)) ui.firstSide = 1;
     else {
@@ -1806,7 +1808,7 @@ function clickStudent(x, y) {
       }
     }
   } else if (ui.screen === "schedpick") {
-    if (hit(x, y, 648, 8, 140, 44)) ui.screen = "stools";
+    if (hit(x, y, 648, HDR, 140, 44)) ui.screen = "stools";
     else {
       let onBlock = false;
       for (let i = 0; i < 4; i++) {
@@ -1825,7 +1827,7 @@ function clickStudent(x, y) {
       }
     }
   } else if (ui.screen === "order") {
-    if (hit(x, y, 648, 8, 140, 44)) ui.screen = "stools";
+    if (hit(x, y, 648, HDR, 140, 44)) ui.screen = "stools";
     else {
       for (let i = 1; i < ui.order.length; i++) {
         const top = 80 + i * 70;
@@ -1838,19 +1840,19 @@ function clickStudent(x, y) {
       }
     }
   } else if (ui.screen === "accpick") {
-    if (hit(x, y, 648, 8, 140, 44)) ui.screen = "stools";
+    if (hit(x, y, 648, HDR, 140, 44)) ui.screen = "stools";
     else {
       const row = Math.floor((y - 56) / 40);
       if (row >= 0 && row < ACC.length && y < 56 + row * 40 + 36) ui.acc[row] = !ui.acc[row];
     }
   } else if (ui.screen === "keys") {
-    if (hit(x, y, 500, 8, 140, 44)) {
+    if (hit(x, y, 500, HDR, 140, 44)) {
       ui.screen = ui.typeMode === "name" ? "settings"
         : ui.typeMode === "write" ? "write"
         : (ui.typeMode === "firstword" || ui.typeMode === "thenword") ? "firstpick"
         : ui.typeMode === "stepword" ? "schedpick"
         : "menu";
-    } else if (hit(x, y, 648, 8, 140, 44) && ui.typed.trim()) {
+    } else if (hit(x, y, 648, HDR, 140, 44) && ui.typed.trim()) {
       if (ui.typeMode === "name") { ui.name = ui.typed.trim(); ui.screen = "settings"; }
       else if (ui.typeMode === "firstword") { ui.first = ui.typed.trim().slice(0, 18); ui.firstSide = 1; ui.screen = "firstpick"; }
       else if (ui.typeMode === "thenword") { ui.then = ui.typed.trim().slice(0, 18); ui.screen = "firstpick"; }
@@ -1886,10 +1888,10 @@ function clickStudent(x, y) {
       });
     }
   } else if (ui.screen === "write") {
-    if (hit(x, y, 500, 8, 140, 44)) {
+    if (hit(x, y, 500, HDR, 140, 44)) {
       if (ui.fromExpress) { ui.fromExpress = false; ui.screen = "express"; }
       else { stopExpress(); goBack(); return; }
-    } else if (hit(x, y, 648, 8, 140, 44)) {
+    } else if (hit(x, y, 648, HDR, 140, 44)) {
       if (ui.fromExpress) { stopExpress(); ui.fromExpress = false; bridgerSay("Nice writing."); ui.screen = "zone"; }
       else { notify(ui.open, "Wrote how I feel"); showDetail(ui.open); return; }
     }
@@ -1909,7 +1911,7 @@ function clickStudent(x, y) {
       ui.fromExpress = false;
     }
     else if (ui.board === 2) {
-      CHALK_X.forEach((cx, i) => { if (hit(x, y, cx, 58, 90, 36)) ui.chalk = i; });
+      CHALK_X.forEach((cx, i) => { if (hit(x, y, cx, 76, 90, 36)) ui.chalk = i; });
     }
     if (hit(x, y, 192, 8, 104, 44)) ui.strokes = [];
   }
@@ -1928,7 +1930,7 @@ function clickTeacher(x, y) {
     paintTeacher();
     return;
   }
-  if (hit(x, y, 200, 2, 36, 32)) {
+  if (hit(x, y, 200, 18, 36, 32)) {
     ui.teacherBack = ui.teacherStep;
     ui.teacherStep = "look";
     paintTeacher();
@@ -1987,14 +1989,14 @@ student.addEventListener("click", (event) => {
 student.addEventListener("pointerdown", (event) => {
   if (ui.screen !== "draw") return;
   const [x, y] = localPoint(student, event);
-  if (y < 108 || y >= 420 || x < 0) { clickStudent(x, y); return; }
+  if (y < 120 || y >= 420 || x < 0) { clickStudent(x, y); return; }
   ui.drawing = true;
   ui.last = [x, y];
 });
 student.addEventListener("pointermove", (event) => {
   if (!ui.drawing) return;
   const [x, y] = localPoint(student, event);
-  if (y < 108 || y >= 420) return;
+  if (y < 120 || y >= 420) return;
   ui.strokes.push([ui.last[0], ui.last[1], x, y, penColor()]);
   ui.last = [x, y];
   paintDraw();

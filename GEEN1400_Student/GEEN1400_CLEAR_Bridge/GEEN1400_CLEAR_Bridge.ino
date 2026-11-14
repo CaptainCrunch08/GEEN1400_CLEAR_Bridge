@@ -6,13 +6,14 @@
   Board: ESP32S3 Dev Module
   PSRAM: OPI PSRAM
   Flash Size: 4MB
-  Partition Scheme: Huge APP (3MB No OTA)
+  Partition Scheme: Huge APP (3MB No OTA/1MB SPIFFS)
   Library: LovyanGFX (Library Manager)
 
   USB-C on the CrowPanel is the program port. If upload sits on
   "Connecting...", hold BOOT, tap RST, and release BOOT.
-  For the website's USB settings link, set USB CDC On Boot to Enabled.
-  Bluetooth settings work without that switch.
+  USB CDC On Boot must stay Disabled. This panel's touch chip uses
+  GPIO 19 and 20, and USB CDC takes those same pins, so the picture
+  stays up and taps stop working. Change panel settings over Bluetooth.
 
   A student selection is sent by Bluetooth to the teacher device. There
   is no phone app. The teacher answers Yes or No, and that answer shows
@@ -27,9 +28,10 @@
   Grades K through 2 blow out a candle. Older grades use the box.
 
   The panel stays covered until the class PIN is entered. That is the
-  same four digits chosen on the teacher device. Ten seconds with no
-  touch covers the screen again, so a message is not left in view.
-  The name saved on the panel is locked with that PIN.
+  same four digits chosen on the teacher device. Five minutes with no
+  touch turns the screen off. The next tap asks for the class PIN
+  before the page comes back. The name saved on the panel is locked
+  with that PIN.
 
   The gear in the top right opens settings. A teacher can change the
   name on the startup screen, the brightness, and the type size.
@@ -58,6 +60,7 @@
 #include <BLESecurity.h>
 #include "LogoMark.h"
 #include "ToolboxMark.h"
+#include "HubIcons.h"
 #include <string.h>
 #include <time.h>
 #include <sys/time.h>
@@ -66,7 +69,6 @@
 #include <Preferences.h>   // saves a few settings in flash across restarts
 #include <esp_system.h>
 #include <LovyanGFX.hpp>   // draws text, rectangles, and reads the touch panel
-#include "driver/i2s.h"    // onboard speaker: I2S data 17, word select 18, clock 42
 #include <math.h>
 #if !defined(CONFIG_IDF_TARGET_ESP32S3)
 #error "This sketch requires an ESP32-S3 board. In Arduino IDE select ESP32S3 Dev Module."
@@ -221,9 +223,9 @@ static const int LOCK_CHANGE = 2;
 static const int LOCK_SET_PASS = 3;       // teacher chooses the settings password
 static const int LOCK_SET_PASS_AGAIN = 4; // the same password a second time
 static const int LOCK_SETTINGS = 5;       // password required before settings
-static const unsigned long PRIVACY_IDLE_MS = 10000;
+static const unsigned long PRIVACY_IDLE_MS = 5UL * 60UL * 1000UL;
 
-static const int DRAW_HEADER_H = 108;
+static const int DRAW_HEADER_H = 120;
 static const int DRAW_CANVAS_BOTTOM = 420;
 static const int DRAW_BACK_X = 8;
 static const int DRAW_BACK_Y = 8;
@@ -235,7 +237,7 @@ static const int DRAW_NEW_X = 310;
 static const int DRAW_READ_X = 410;
 static const int DRAW_BUTTON_Y = 8;
 static const int DRAW_BUTTON_H = 44;
-static const int DRAW_COLOR_Y = 58;
+static const int DRAW_COLOR_Y = 76;
 static const int DRAW_COLOR_W = 90;
 static const int DRAW_COLOR_H = 36;
 static const int DRAW_COLOR_X[] = {12, 110, 208, 306, 404, 502, 600, 698};
@@ -296,25 +298,25 @@ static const int ROW_W = 752;
 static const int ROW_GAP = 6;
 static const int LIST_TOP = 64;
 static const int LIST_BOTTOM = 412;
-// Gear sits in the top-right corner. Back sits just to its left on
-// the screens that need a way to return. Done and Save reuse the
-// top-right corner on the settings screens, where the gear is hidden.
+// The battery mark sits in the top-right corner. Back, the gear, and
+// Done sit one row under it so they do not cover the mark.
+static const int HEADER_Y = 28;
 static const int GEAR_W = 56;
 static const int GEAR_H = 44;
 static const int GEAR_X = 800 - 12 - GEAR_W;
-static const int GEAR_Y = 8;
+static const int GEAR_Y = HEADER_Y;
 static const int BACK_W = 140;
 static const int BACK_H = 44;
 static const int BACK_X = GEAR_X - 8 - BACK_W;
-static const int BACK_Y = 8;
+static const int BACK_Y = HEADER_Y;
 static const int DONE_W = 140;
 static const int DONE_H = 44;
 static const int DONE_X = 800 - 12 - DONE_W;
-static const int DONE_Y = 8;
+static const int DONE_Y = HEADER_Y;
 static const int NAME_BACK_W = 140;
 static const int NAME_BACK_H = 44;
 static const int NAME_BACK_X = DONE_X - 8 - NAME_BACK_W;
-static const int NAME_BACK_Y = 8;
+static const int NAME_BACK_Y = HEADER_Y;
 
 // Layout of the settings page and the name keyboard, in pixels.
 // STUDENT_NAME_MAX is the longest name that fits in the saved setting and
@@ -328,17 +330,17 @@ static const int TYPE_MESSAGE = 1;
 static const int TYPE_WRITE = 2;
 static const int TYPE_TOOL = 3;
 static const int TYPE_TEACHER = 4;
-static const int NAME_Y = 58;
+static const int NAME_Y = 78;
 static const int NAME_H = 40;
-static const int TEACH_Y = 102;
+static const int TEACH_Y = 122;
 static const int TEACH_H = 40;
 static const int CHANGE_W = 128;
 static const int CHANGE_H = 40;
 static const int CHANGE_X = ROW_X + ROW_W - 12 - CHANGE_W;
 static const int CHANGE_Y = NAME_Y + 8;
 
-static const int BRIGHT_LABEL_Y = 146;
-static const int BRIGHT_Y = 162;
+static const int BRIGHT_LABEL_Y = 166;
+static const int BRIGHT_Y = 182;
 static const int BRIGHT_H = 28;
 static const int STEP_W = 56;
 static const int MINUS_X = 24;
@@ -351,14 +353,14 @@ static const int BAR_W = PCT_X - 8 - BAR_X;
 static const int BRIGHT_MIN = 20;
 static const int BRIGHT_MAX = 100;
 
-static const int GRADE_NOTE_Y = 192;
-static const int GRADE_TOP = 210;
+static const int GRADE_NOTE_Y = 212;
+static const int GRADE_TOP = 230;
 static const int GRADE_H = 34;
 static const int GRADE_GAP = 2;
-static const int LOOK_Y = 358;
+static const int LOOK_Y = 378;
 static const int LOOK_H = 36;
 // Bridger's on/off row sits under the age groups.
-static const int BEAVER_Y = 400;
+static const int BEAVER_Y = 420;
 static const int BEAVER_H = 46;
 static const int GRADE_COUNT = 4;
 // These match the four rows in gradeOptions, top to bottom.
@@ -370,7 +372,7 @@ static const int GRADE_5 = 3;
 static const int GRADE_LIVE = GRADE_34;
 
 static const int FIELD_X = 24;
-static const int FIELD_Y = 68;
+static const int FIELD_Y = 80;
 static const int FIELD_W = 752;
 static const int FIELD_H = 64;
 static const int KEY_LEFT = 16;
@@ -416,7 +418,7 @@ static const uint16_t COL_ROW = 0x2104;
 static uint16_t COL_TRY = 0x07E0;
 static uint16_t COL_ASK = 0xFD20;
 static const uint16_t COL_FOOT = 0x2104;
-static uint16_t COL_MINT = 0xE79D;
+static uint16_t COL_MINT = 0xB6D7;
 static uint16_t COL_CREAM = 0xFFBD;
 static uint16_t COL_LILAC = 0xEF3E;
 static uint16_t COL_PALE = 0xE79F;
@@ -447,7 +449,7 @@ static const int TUBE_BOTTOM = 300;
 static const int BULB_R = 46;
 static const int LABEL_X = 328;
 static const int LABEL_W = 196;
-static const int LABEL_H = 34;
+static const int LABEL_H = 42;
 static const int THIS_X = 500;
 static const int THIS_Y = 360;
 static const int THIS_W = 270;
@@ -740,6 +742,7 @@ static bool classPinSet = false;
 static int lockJob = LOCK_CREATE;
 static int coveredScreen = SCREEN_HELLO;
 static bool privacyCover = false;
+static bool screenAsleep = false;
 static char pinEntry[5] = "";
 static char lockNote[48] = "Ask your teacher for the class PIN";
 static String sealedName;
@@ -933,6 +936,24 @@ static uint16_t pageSoft() {
   return darkMode ? 0x8410 : 0x4A69;
 }
 
+// Light mode settings sit on soft paper with a deeper green, so the
+// rows are not black slabs and the On buttons are not neon.
+static uint16_t settingsCard() {
+  return darkMode ? (uint16_t)COL_ROW : (uint16_t)0xE77D;
+}
+
+static uint16_t settingsInk() {
+  return darkMode ? (uint16_t)COL_FG : pageInk();
+}
+
+static uint16_t settingsOn() {
+  return darkMode ? COL_TRY : (uint16_t)0x3C6B;
+}
+
+static uint16_t settingsOff() {
+  return darkMode ? (uint16_t)COL_FOOT : (uint16_t)0xD69A;
+}
+
 static void applyTheme() {
   if (darkMode) {
     COL_TRY = 0x1B46;
@@ -944,7 +965,7 @@ static void applyTheme() {
   } else {
     COL_TRY = 0x07E0;
     COL_ASK = 0xFD20;
-    COL_MINT = 0xE79D;
+    COL_MINT = 0xB6D7;
     COL_CREAM = 0xFFBD;
     COL_LILAC = 0xEF3E;
     COL_PALE = 0xE79F;
@@ -1172,7 +1193,8 @@ static void takeLinkPacket(const uint8_t *data, int len) {
     memcpy(&settings, data, sizeof(settings));
     if (settings.version != CLEAR_LINK_VERSION ||
         settings.kind != CLEAR_KIND_STUDENT_SETTINGS ||
-        settings.drawingEnabled > 1) {
+        settings.drawingEnabled > 1 || settings.expressOn > 1 ||
+        settings.calmMode > 1 || settings.bridgerOn > 1) {
       return;
     }
     noInterrupts();
@@ -1320,6 +1342,8 @@ static bool connectFoundTeacher(BLEAdvertisedDevice &found) {
   }
   teacherClient->setMTU(CLEAR_BLE_MTU);
   // The class PIN is the Bluetooth passkey. A wrong PIN cannot join.
+  // This is only for the teacher. The website link stays unpaired.
+  useTeacherPairing(true);
 #if defined(CONFIG_NIMBLE_ENABLED)
   bool secured = BLESecurity::startSecurity(teacherClient->getConnId());
 #else
@@ -1329,6 +1353,7 @@ static bool connectFoundTeacher(BLEAdvertisedDevice &found) {
   if (secured) {
     BLESecurity::waitForAuthenticationComplete(8000);
   }
+  useTeacherPairing(false);
   if (!secured) {
     teacherClient->disconnect();
     pinRejected = true;
@@ -1356,6 +1381,8 @@ static bool connectFoundTeacher(BLEAdvertisedDevice &found) {
   return true;
 }
 
+static void showSendFailed();
+
 static void sendOutbound() {
   if (noticeRemote == nullptr) {
     return;
@@ -1372,6 +1399,9 @@ static void sendOutbound() {
     }
   } else {
     nextBleMs = millis() + 8000;
+    if (tracksStatus) {
+      showSendFailed();
+    }
   }
   if (currentScreen != SCREEN_SETTINGS && currentScreen != SCREEN_NAME &&
       currentScreen != SCREEN_DRAW_MENU && currentScreen != SCREEN_DRAW_CANVAS) {
@@ -1390,6 +1420,15 @@ static void showSendFailed() {
 }
 
 static BLEAdvertising *panelAd = nullptr;
+static volatile bool panelWebConnected = false;
+
+// The class PIN pairs this panel with the teacher. The website uses the
+// settings password instead, so an open link from the computer must not
+// be asked to pair. Pairing is turned on only while connecting to the teacher.
+static void useTeacherPairing(bool on) {
+  BLESecurity::setAuthenticationMode(on ? ESP_LE_AUTH_REQ_SC_MITM_BOND
+                                        : ESP_LE_AUTH_NO_BOND);
+}
 
 // A teacher search stops the settings broadcast. Start it again so the
 // website can still find this panel.
@@ -1399,20 +1438,44 @@ static void resumePanelAd() {
   }
 }
 
+static bool websiteOnRadio() {
+  if (panelWebConnected) {
+    return true;
+  }
+  BLEServer *server = BLEDevice::getServer();
+  if (server != nullptr && server->getConnectedCount() > 0) {
+    panelWebConnected = true;
+    return true;
+  }
+  return false;
+}
+
 // Look for the teacher only when a notice still has to be sent.
 // The search used to freeze this sketch for a second. The touch chip
 // then kept reporting the old finger, and every later tap was ignored.
 // The search now finishes in the background.
 static void blePump() {
-  if (!linkReady || (!needSend && !drawingSyncPending)) {
+  if (!linkReady) {
     return;
   }
+  // A computer reading settings uses this same radio. Searching for the
+  // teacher while that link is open makes the computer's write fail.
+  if (websiteOnRadio()) {
+    if (scanBusy || scanDone) {
+      if (scanBusy) {
+        BLEDevice::getScan()->stop();
+      }
+      scanBusy = false;
+      scanDone = false;
+      resumePanelAd();
+    }
+    return;
+  }
+  bool outbound = needSend;
   if (teacherClient != nullptr && teacherClient->isConnected() && noticeRemote != nullptr) {
-    if (millis() >= nextBleMs) {
+    if (outbound && millis() >= nextBleMs) {
       if (needSend) {
         sendOutbound();
-      } else {
-        sendDrawingStep();
       }
     }
     return;
@@ -1427,7 +1490,10 @@ static void blePump() {
     if (results != nullptr) {
       for (int i = 0; i < results->getCount(); i++) {
         BLEAdvertisedDevice device = results->getDevice(i);
-        if (device.haveName() && String(device.getName().c_str()) == CLEAR_BLE_NAME) {
+        bool named = device.haveName() && String(device.getName().c_str()) == CLEAR_BLE_NAME;
+        bool service = device.haveServiceUUID() &&
+                       device.isAdvertisingService(BLEUUID(CLEAR_SERVICE_UUID));
+        if (named || service) {
           found = device;
           haveFound = true;
           break;
@@ -1438,13 +1504,14 @@ static void blePump() {
     resumePanelAd();
     if (!haveFound || !connectFoundTeacher(found)) {
       nextBleMs = millis() + 8000;
-      showSendFailed();
+      if (outbound) {
+        showSendFailed();
+      }
       return;
     }
+    resumePanelAd();
     if (needSend) {
       sendOutbound();
-    } else if (drawingSyncPending) {
-      sendDrawingStep();
     }
     return;
   }
@@ -1460,6 +1527,11 @@ static void blePump() {
   }
   if (millis() < nextBleMs) {
     return;
+  }
+  // This radio cannot listen for the teacher while it is advertising
+  // the settings name. The search starts again after the listen ends.
+  if (panelAd != nullptr) {
+    panelAd->stop();
   }
   BLEScan *scan = BLEDevice::getScan();
   scan->setActiveScan(true);
@@ -1500,7 +1572,7 @@ static void startTeacherLink() {
   ensureRadio();
   BLEDevice::setSecurityCallbacks(new StudentSecurityCallbacks());
   BLESecurity::setCapability(ESP_IO_CAP_IN);
-  BLESecurity::setAuthenticationMode(ESP_LE_AUTH_REQ_SC_MITM_BOND);
+  useTeacherPairing(false);
   BLESecurity::setKeySize(16);
   BLESecurity::setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
   BLESecurity::setRespEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
@@ -1631,23 +1703,18 @@ static void paintStatus() {
               currentScreen == SCREEN_PLAN;
   uint16_t bar = pageBg();
   uint16_t ink = pageSoft();
-  uint16_t hear = darkMode ? COL_ROW : 0xDEDB;
-  uint16_t hearInk = darkMode ? pageInk() : (uint16_t)0x1082;
   lcd.fillRect(0, calm ? 400 : 420, 800, calm ? 80 : 60, bar);
   lcd.setTextDatum(textdatum_t::top_left);
   lcd.setFont(&fonts::Font2);
   lcd.setTextColor(ink, bar);
-  lcd.setCursor(232, calm ? 424 : 440);
+  const int statusX = 116;
   // Dark mode keeps the ask cards muted. The Help button stays a brighter orange.
   const uint16_t helpFill = darkMode ? (uint16_t)0xFC63 : COL_ASK;
   lcd.fillRoundRect(8, 424, 96, 48, 10, helpFill);
-  lcd.fillRoundRect(112, 424, 108, 48, 10, hear);
   lcd.setTextDatum(textdatum_t::middle_center);
   lcd.setFont(&fonts::Font2);
   lcd.setTextColor(0x1082, helpFill);
   lcd.drawString("Help", 56, 448);
-  lcd.setTextColor(hearInk, hear);
-  lcd.drawString("Hear it", 166, 448);
   lcd.setTextDatum(textdatum_t::top_left);
   lcd.setTextColor(ink, bar);
   char line[72];
@@ -1668,6 +1735,9 @@ static void paintStatus() {
     snprintf(line, sizeof(line), "%s said no to %s", teacherLabel(), repliedChoice);
   } else if (teacherReply == CLEAR_ANSWER_NO) {
     snprintf(line, sizeof(line), "%s said no", teacherLabel());
+  } else if (teacherReply == CLEAR_ANSWER_LATER &&
+             strcmp(repliedChoice, "My energy is in this zone") == 0) {
+    snprintf(line, sizeof(line), "I'll be there soon");
   } else if (teacherReply == CLEAR_ANSWER_LATER) {
     snprintf(line, sizeof(line), "In a minute");
   } else if (sendFailed && waitingId != 0) {
@@ -1680,130 +1750,10 @@ static void paintStatus() {
     snprintf(line, sizeof(line), "Ready");
   }
   int bubbleLeft = bridgerBubbleLeft(nullptr);
-  clipStatusLine(line, bubbleLeft - 240);
-  lcd.print(line);
+  clipStatusLine(line, bubbleLeft - statusX - 8);
+  lcd.setTextDatum(textdatum_t::middle_left);
+  lcd.drawString(line, statusX, 448);
   paintBridger();
-}
-
-// The CrowPanel speaker is an I2S amplifier on GPIO 17, 18, and 42.
-// Hear it hums the instruction. Breathing adds a tone that rises and falls.
-static bool audioReady = false;
-static char speakText[48];
-static int speakPos = 0;
-static int speakSamples = 0;
-static const int AUDIO_RATE = 16000;
-
-static void startAudio() {
-  i2s_config_t cfg = {};
-  cfg.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX);
-  cfg.sample_rate = AUDIO_RATE;
-  cfg.bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT;
-  cfg.channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT;
-#if defined(I2S_COMM_FORMAT_STAND_I2S)
-  cfg.communication_format = I2S_COMM_FORMAT_STAND_I2S;
-#else
-  cfg.communication_format = I2S_COMM_FORMAT_I2S;
-#endif
-  cfg.intr_alloc_flags = 0;
-  cfg.dma_buf_count = 4;
-  cfg.dma_buf_len = 128;
-  cfg.use_apll = false;
-  cfg.tx_desc_auto_clear = true;
-  if (i2s_driver_install(I2S_NUM_0, &cfg, 0, nullptr) != ESP_OK) {
-    return;
-  }
-  i2s_pin_config_t pins = {};
-  pins.mck_io_num = I2S_PIN_NO_CHANGE;
-  pins.bck_io_num = 42;
-  pins.ws_io_num = 18;
-  pins.data_out_num = 17;
-  pins.data_in_num = I2S_PIN_NO_CHANGE;
-  if (i2s_set_pin(I2S_NUM_0, &pins) != ESP_OK) {
-    return;
-  }
-  audioReady = true;
-}
-
-static int toneFor(char c) {
-  if (c == ' ' || c == '.' || c == ',' || c == '!' || c == '?') {
-    return 0;
-  }
-  if (c == 'a' || c == 'A') return 440;
-  if (c == 'e' || c == 'E') return 523;
-  if (c == 'i' || c == 'I') return 659;
-  if (c == 'o' || c == 'O') return 392;
-  if (c == 'u' || c == 'U') return 330;
-  return 247;
-}
-
-static void speakLine(const char *line) {
-  if (line == nullptr) {
-    return;
-  }
-  strncpy(speakText, line, sizeof(speakText) - 1);
-  speakText[sizeof(speakText) - 1] = 0;
-  speakPos = 0;
-  speakSamples = 0;
-}
-
-static void breathGeometry(int *phase, int *count, int *size);
-
-static void serviceAudio() {
-  if (!audioReady) {
-    return;
-  }
-  int16_t frames[128 * 2];
-  int freq = 0;
-  int loud = 0;
-  if (speakText[0] != 0 && speakPos < (int)strlen(speakText)) {
-    freq = toneFor(speakText[speakPos]);
-    loud = freq == 0 ? 0 : (speakText[speakPos] >= 'a' ? 1800 : 900);
-  } else if (breathRunning) {
-    int phase = 0;
-    int count = 0;
-    int size = 0;
-    breathGeometry(&phase, &count, &size);
-    unsigned long along = (millis() - breathMs) % 4000;
-    if (phase == 0) {
-      freq = 280 + (int)(along * 220 / 4000);
-    } else if (phase == 1) {
-      freq = 500;
-    } else if (phase == 2) {
-      freq = 500 - (int)(along * 220 / 4000);
-    } else {
-      freq = 280;
-    }
-    loud = 1200;
-  } else {
-    return;
-  }
-  static float audioPhase = 0;
-  for (int i = 0; i < 128; i++) {
-    int16_t sample = 0;
-    if (freq > 0 && loud > 0) {
-      audioPhase += 2.0f * 3.14159f * freq / AUDIO_RATE;
-      if (audioPhase > 6.28318f) {
-        audioPhase -= 6.28318f;
-      }
-      sample = (int16_t)(sinf(audioPhase) * loud);
-    }
-    frames[i * 2] = sample;
-    frames[i * 2 + 1] = sample;
-    if (speakText[0] != 0) {
-      speakSamples++;
-      if (speakSamples >= AUDIO_RATE / 12) {
-        speakSamples = 0;
-        speakPos++;
-        if (speakText[speakPos] == 0) {
-          speakText[0] = 0;
-        }
-        freq = speakText[0] ? toneFor(speakText[speakPos]) : 0;
-        loud = freq == 0 ? 0 : 900;
-      }
-    }
-  }
-  size_t wrote = 0;
-  i2s_write(I2S_NUM_0, frames, sizeof(frames), &wrote, 0);
 }
 
 // Orange means the teacher is being asked to answer.
@@ -1927,6 +1877,14 @@ static bool inBox(int32_t x, int32_t y, int boxX, int boxY, int boxW, int boxH) 
 
 // A rounded rectangle with its label centered. Used for Back, Done,
 // Save, Change, and every keyboard key.
+static void paintSoftButton(int x, int y, int w, int h, const char *label, uint16_t fill, uint16_t ink) {
+  lcd.fillRoundRect(x, y, w, h, 8, fill);
+  lcd.setFont(&fonts::Font2);
+  lcd.setTextDatum(textdatum_t::middle_center);
+  lcd.setTextColor(ink, fill);
+  lcd.drawString(label, x + w / 2, y + h / 2);
+}
+
 static void paintTopButton(int x, int y, int w, int h, const char *label, uint16_t fill) {
   lcd.fillRoundRect(x, y, w, h, 8, fill);
   lcd.setFont(&fonts::Font2);
@@ -2086,6 +2044,27 @@ static void drawYoungIcon(const char *key, int cx, int cy, int r, uint16_t ink, 
   }
 }
 
+// Charge mark. This CrowPanel charges a cell on the battery
+// plug, and that voltage is not wired to a pin this sketch can read,
+// so the mark says USB instead of a made-up percent.
+static void paintBattery() {
+  const int x = 710;
+  const int y = 6;
+  const int w = 28;
+  const int h = 14;
+  uint16_t ink = pageInk();
+  uint16_t paper = pageBg();
+  lcd.fillRect(x, y - 2, 78, h + 4, paper);
+  lcd.drawRect(x, y, w, h, ink);
+  lcd.drawRect(x + 1, y + 1, w - 2, h - 2, ink);
+  lcd.fillRect(x + w + 1, y + 4, 3, 6, ink);
+  lcd.setTextDatum(textdatum_t::middle_left);
+  lcd.setFont(&fonts::Font2);
+  lcd.setTextColor(ink, paper);
+  lcd.drawString("USB", x + w + 8, y + h / 2);
+  lcd.setTextDatum(textdatum_t::top_left);
+}
+
 // A soft gear: rounded teeth, a thick ring, and a hole. The whole
 // button is what a tap has to hit, not only the icon.
 static void paintGearButton() {
@@ -2103,6 +2082,7 @@ static void paintGearButton() {
   }
   lcd.fillCircle(cx, cy, 8, metal);
   lcd.fillCircle(cx, cy, 4, btn);
+  paintBattery();
 }
 
 // Paint one pixel of the handshake heart. Soft edges mix the green
@@ -2604,28 +2584,28 @@ static void paintSettings() {
   lcd.setFont(&fonts::Font4);
   lcd.setTextColor(pageInk(), pageBg());
   lcd.drawString("Settings", 24, 30);
-  paintTopButton(360, 8, 168, 44, "Student tools", COL_ROW);
-  paintTopButton(DONE_X, DONE_Y, DONE_W, DONE_H, "Done", COL_TRY);
+  paintSoftButton(360, HEADER_Y, 168, 44, "Student tools", settingsCard(), settingsInk());
+  paintSoftButton(DONE_X, DONE_Y, DONE_W, DONE_H, "Done", settingsOn(), settingsInk());
 
-  lcd.fillRoundRect(ROW_X, NAME_Y, ROW_W, NAME_H, 12, COL_ROW);
-  lcd.fillRoundRect(ROW_X, TEACH_Y, ROW_W, TEACH_H, 12, COL_ROW);
+  lcd.fillRoundRect(ROW_X, NAME_Y, ROW_W, NAME_H, 12, settingsCard());
+  lcd.fillRoundRect(ROW_X, TEACH_Y, ROW_W, TEACH_H, 12, settingsCard());
   lcd.setTextDatum(textdatum_t::middle_left);
   lcd.setFont(&fonts::Font2);
-  lcd.setTextColor(COL_FG, COL_ROW);
+  lcd.setTextColor(settingsInk(), settingsCard());
   lcd.drawString("Student", 44, NAME_Y + NAME_H / 2);
   lcd.drawString(studentName, 160, NAME_Y + NAME_H / 2);
   lcd.drawString("Teacher", 44, TEACH_Y + TEACH_H / 2);
   lcd.drawString(teacherName, 160, TEACH_Y + TEACH_H / 2);
-  paintTopButton(CHANGE_X, NAME_Y + 4, CHANGE_W, 32, "Change", COL_TRY);
-  paintTopButton(CHANGE_X, TEACH_Y + 4, CHANGE_W, 32, "Change", COL_TRY);
+  paintSoftButton(CHANGE_X, NAME_Y + 4, CHANGE_W, 32, "Change", settingsOn(), settingsInk());
+  paintSoftButton(CHANGE_X, TEACH_Y + 4, CHANGE_W, 32, "Change", settingsOn(), settingsInk());
 
   lcd.setTextDatum(textdatum_t::top_left);
   lcd.setFont(&fonts::Font2);
   lcd.setTextColor(pageInk(), pageBg());
   lcd.drawString("Brightness", 24, BRIGHT_LABEL_Y);
-  paintTopButton(MINUS_X, BRIGHT_Y, STEP_W, BRIGHT_H, "-", COL_ROW);
-  paintTopButton(PLUS_X, BRIGHT_Y, STEP_W, BRIGHT_H, "+", COL_ROW);
-  lcd.fillRoundRect(BAR_X, BRIGHT_Y + 8, BAR_W, BRIGHT_H - 16, 8, COL_FOOT);
+  paintSoftButton(MINUS_X, BRIGHT_Y, STEP_W, BRIGHT_H, "-", settingsCard(), settingsInk());
+  paintSoftButton(PLUS_X, BRIGHT_Y, STEP_W, BRIGHT_H, "+", settingsCard(), settingsInk());
+  lcd.fillRoundRect(BAR_X, BRIGHT_Y + 8, BAR_W, BRIGHT_H - 16, 8, settingsOff());
   // How much of the bar to fill. At 20% the fill is empty. At 100% it is full.
   int fillW = BAR_W * (brightnessPct - BRIGHT_MIN) / (BRIGHT_MAX - BRIGHT_MIN);
   if (fillW < 0) {
@@ -2635,7 +2615,7 @@ static void paintSettings() {
     fillW = BAR_W;
   }
   if (fillW > 0) {
-    lcd.fillRoundRect(BAR_X, BRIGHT_Y + 8, fillW, BRIGHT_H - 16, 8, COL_TRY);
+    lcd.fillRoundRect(BAR_X, BRIGHT_Y + 8, fillW, BRIGHT_H - 16, 8, settingsOn());
   }
   char pct[8];
   snprintf(pct, sizeof(pct), "%d%%", brightnessPct);
@@ -2652,11 +2632,11 @@ static void paintSettings() {
   for (int i = 0; i < GRADE_COUNT; i++) {
     int top = gradeRowTop(i);
     bool selected = (i == gradeLevel);
-    uint16_t fill = selected ? COL_TRY : COL_ROW;
+    uint16_t fill = selected ? settingsOn() : settingsCard();
     lcd.fillRoundRect(ROW_X, top, ROW_W, GRADE_H, 12, fill);
     lcd.setTextDatum(textdatum_t::top_left);
     lcd.setFont(&fonts::Font2);
-    lcd.setTextColor(COL_FG, fill);
+    lcd.setTextColor(settingsInk(), fill);
     lcd.drawString(gradeOptions[i].label, ROW_X + 16, top + 2);
     lcd.drawString(gradeOptions[i].about, ROW_X + 16, top + 16);
     if (selected) {
@@ -2665,38 +2645,39 @@ static void paintSettings() {
     }
   }
 
-  lcd.fillRoundRect(ROW_X, LOOK_Y, ROW_W, LOOK_H, 12, COL_ROW);
+  lcd.fillRoundRect(ROW_X, LOOK_Y, ROW_W, LOOK_H, 12, settingsCard());
   lcd.setTextDatum(textdatum_t::middle_left);
   lcd.setFont(&fonts::Font2);
-  lcd.setTextColor(COL_FG, COL_ROW);
+  lcd.setTextColor(settingsInk(), settingsCard());
   lcd.drawString("Look", ROW_X + 16, LOOK_Y + LOOK_H / 2);
-  uint16_t lightFill = darkMode ? COL_FOOT : COL_TRY;
-  uint16_t darkFill = darkMode ? COL_TRY : COL_FOOT;
+  uint16_t lightFill = darkMode ? settingsOff() : settingsOn();
+  uint16_t darkFill = darkMode ? settingsOn() : settingsOff();
   lcd.fillRoundRect(500, LOOK_Y + 4, 120, LOOK_H - 8, 8, lightFill);
   lcd.fillRoundRect(632, LOOK_Y + 4, 120, LOOK_H - 8, 8, darkFill);
   lcd.setTextDatum(textdatum_t::middle_center);
-  lcd.setTextColor(darkMode ? COL_FG : (uint16_t)0x1082, lightFill);
+  lcd.setTextColor(settingsInk(), lightFill);
   lcd.drawString("Light", 560, LOOK_Y + LOOK_H / 2);
-  lcd.setTextColor(darkMode ? pageInk() : COL_FG, darkFill);
+  lcd.setTextColor(settingsInk(), darkFill);
   lcd.drawString("Dark", 692, LOOK_Y + LOOK_H / 2);
 
-  lcd.fillRoundRect(ROW_X, BEAVER_Y, 368, BEAVER_H, 12, COL_ROW);
-  lcd.fillRoundRect(408, BEAVER_Y, 368, BEAVER_H, 12, COL_ROW);
+  lcd.fillRoundRect(ROW_X, BEAVER_Y, 368, BEAVER_H, 12, settingsCard());
+  lcd.fillRoundRect(408, BEAVER_Y, 368, BEAVER_H, 12, settingsCard());
   lcd.setTextDatum(textdatum_t::middle_left);
   lcd.setFont(&fonts::Font2);
-  lcd.setTextColor(COL_FG, COL_ROW);
+  lcd.setTextColor(settingsInk(), settingsCard());
   lcd.drawString("Bridger", ROW_X + 16, BEAVER_Y + BEAVER_H / 2);
   lcd.drawString("Draw or write", 424, BEAVER_Y + BEAVER_H / 2);
-  uint16_t beaverFill = bridgerOn ? COL_TRY : COL_FOOT;
-  uint16_t expressFill = expressOn ? COL_TRY : COL_FOOT;
+  uint16_t beaverFill = bridgerOn ? settingsOn() : settingsOff();
+  uint16_t expressFill = expressOn ? settingsOn() : settingsOff();
   lcd.fillRoundRect(250, BEAVER_Y + 8, 120, 30, 8, beaverFill);
   lcd.fillRoundRect(640, BEAVER_Y + 8, 120, 30, 8, expressFill);
   lcd.setTextDatum(textdatum_t::middle_center);
-  lcd.setTextColor(bridgerOn ? (darkMode ? pageInk() : (uint16_t)COL_BG) : (uint16_t)COL_FG, beaverFill);
+  lcd.setTextColor(settingsInk(), beaverFill);
   lcd.drawString(bridgerOn ? "On" : "Off", 310, BEAVER_Y + BEAVER_H / 2);
-  lcd.setTextColor(expressOn ? (darkMode ? pageInk() : (uint16_t)COL_BG) : (uint16_t)COL_FG, expressFill);
+  lcd.setTextColor(settingsInk(), expressFill);
   lcd.drawString(expressOn ? "On" : "Off", 700, BEAVER_Y + BEAVER_H / 2);
   lcd.setTextDatum(textdatum_t::top_left);
+  paintBattery();
 }
 
 // Add one key to the list, unless the list is already full.
@@ -2820,6 +2801,7 @@ static void paintNameEditor() {
     paintTopButton(keys[i].x, keys[i].y, keys[i].w, keys[i].h, label, fill);
   }
   lcd.setTextDatum(textdatum_t::top_left);
+  paintBattery();
 }
 
 static void paintDrawingMenu() {
@@ -2840,7 +2822,9 @@ static void paintDrawingMenu() {
   const char *labels[] = {"Graph Board - Digital Pencil",
                           "White Board - Digital Marker",
                           "Chalk Board - Digital Chalk"};
-  const uint16_t textColors[] = {COL_FG, COL_FG, 0xFFFF};
+  // The first two buttons are white, so their words stay dark.
+  // The chalkboard button is green, so its words stay white.
+  const uint16_t textColors[] = {0x1082, 0x1082, 0xFFFF};
 
   for (int i = 0; i < 3; i++) {
     lcd.fillRoundRect(optionX, optionYs[i], optionW, optionH, 12, fills[i]);
@@ -2850,6 +2834,7 @@ static void paintDrawingMenu() {
     lcd.drawString(labels[i], 400, optionYs[i] + optionH / 2);
   }
   lcd.setTextDatum(textdatum_t::top_left);
+  paintBattery();
 }
 
 static uint16_t drawingSurfaceColor() {
@@ -2954,13 +2939,16 @@ static void paintDrawingCanvas() {
     lcd.drawString("White Board - Marker", 555, 30);
   }
 
+  // Chalk buttons are white so they stand out on the green board.
+  // Their words are dark. The other boards keep white words on a dark button.
   uint16_t buttonFill = selectedBoard == BOARD_CHALK ? 0xFFFF : COL_ROW;
-  paintTopButton(DRAW_BACK_X, DRAW_BUTTON_Y, DRAW_BACK_W, DRAW_BUTTON_H, "Back", buttonFill);
-  paintTopButton(DRAW_SAVE_X, DRAW_BUTTON_Y, 80, DRAW_BUTTON_H, "Save", buttonFill);
-  paintTopButton(DRAW_RESET_X, DRAW_BUTTON_Y, 104, DRAW_BUTTON_H, "Reset", buttonFill);
-  paintTopButton(DRAW_NEW_X, DRAW_BUTTON_Y, 96, DRAW_BUTTON_H, "New", buttonFill);
-  paintTopButton(DRAW_READ_X, DRAW_BUTTON_Y, 88, DRAW_BUTTON_H,
-                 drawingOcrVisible ? "Draw" : "Read", buttonFill);
+  uint16_t buttonInk = selectedBoard == BOARD_CHALK ? (uint16_t)0x1082 : (uint16_t)COL_FG;
+  paintSoftButton(DRAW_BACK_X, DRAW_BUTTON_Y, DRAW_BACK_W, DRAW_BUTTON_H, "Back", buttonFill, buttonInk);
+  paintSoftButton(DRAW_SAVE_X, DRAW_BUTTON_Y, 80, DRAW_BUTTON_H, "Save", buttonFill, buttonInk);
+  paintSoftButton(DRAW_RESET_X, DRAW_BUTTON_Y, 104, DRAW_BUTTON_H, "Reset", buttonFill, buttonInk);
+  paintSoftButton(DRAW_NEW_X, DRAW_BUTTON_Y, 96, DRAW_BUTTON_H, "New", buttonFill, buttonInk);
+  paintSoftButton(DRAW_READ_X, DRAW_BUTTON_Y, 88, DRAW_BUTTON_H,
+                  drawingOcrVisible ? "Draw" : "Read", buttonFill, buttonInk);
   if (selectedBoard == BOARD_CHALK) {
     paintChalkChoices();
   }
@@ -3007,6 +2995,7 @@ static void paintDrawingCanvas() {
   paintExpressClock();
   lcd.setTextDatum(textdatum_t::top_left);
   cursorVisible = false;
+  paintBattery();
 }
 
 static uint16_t drawingInkColor() {
@@ -3302,11 +3291,11 @@ static void paintExpressClock() {
   snprintf(clock, sizeof(clock), "%d:%02d", (int)(left / 60000UL),
            (int)((left / 1000UL) % 60UL));
   if (currentScreen == SCREEN_DRAW_CANVAS && selectedBoard == BOARD_CHALK) {
-    lcd.fillRoundRect(624, 8, 164, 44, 10, COL_FG);
+    lcd.fillRoundRect(624, HEADER_Y, 164, 44, 10, COL_FG);
     lcd.setTextDatum(textdatum_t::middle_center);
     lcd.setFont(&fonts::Font4);
     lcd.setTextColor(0x1082, COL_FG);
-    lcd.drawString(clock, 706, 30);
+    lcd.drawString(clock, 706, HEADER_Y + 22);
   } else if (currentScreen == SCREEN_DRAW_CANVAS) {
     lcd.fillRect(640, DRAW_CANVAS_BOTTOM, 160, 60, COL_FOOT);
     lcd.setTextDatum(textdatum_t::middle_right);
@@ -3314,11 +3303,11 @@ static void paintExpressClock() {
     lcd.setTextColor(COL_FG, COL_FOOT);
     lcd.drawString(clock, 784, DRAW_CANVAS_BOTTOM + 30);
   } else if (currentScreen == SCREEN_DRAW_MENU) {
-    lcd.fillRect(680, 8, 110, 44, pageBg());
+    lcd.fillRect(680, HEADER_Y, 110, 44, pageBg());
     lcd.setTextDatum(textdatum_t::middle_right);
     lcd.setFont(&fonts::Font2);
     lcd.setTextColor(pageInk(), pageBg());
-    lcd.drawString(clock, 784, 30);
+    lcd.drawString(clock, 784, HEADER_Y + 22);
   } else if (currentScreen == SCREEN_NAME || currentScreen == SCREEN_WRITE) {
     lcd.fillRect(200, 8, 140, 44, pageBg());
     lcd.setTextDatum(textdatum_t::middle_left);
@@ -3990,6 +3979,15 @@ static int zoneBandTop(int zone) {
   return TUBE_BOTTOM - (zone + 1) * zoneBandHeight();
 }
 
+// The blue bulb covers most of the bottom band, leaving a short neck.
+static int thermoBulbY() {
+  int neck = zoneBandHeight() / 4;
+  if (neck < 8) {
+    neck = 8;
+  }
+  return zoneBandTop(0) + neck + BULB_R;
+}
+
 // Finger height on the tube becomes a zone. The bottom of the tube is blue.
 static int zoneFromY(int y) {
   int bandH = zoneBandHeight();
@@ -4011,7 +4009,7 @@ static int zoneFromY(int y) {
 
 static bool fingerOnTube(int x, int y) {
   int cx = TUBE_X + TUBE_W / 2;
-  int bulbY = TUBE_BOTTOM + 16;
+  int bulbY = thermoBulbY();
   int dx = x - cx;
   int dy = y - bulbY;
   if (dx * dx + dy * dy <= (BULB_R + 18) * (BULB_R + 18)) {
@@ -4041,33 +4039,21 @@ static void paintThermometer() {
     int h = (zone == 0) ? (TUBE_BOTTOM - top) : zoneBandHeight();
     lcd.fillRect(TUBE_X, top, TUBE_W, h, feelingZones[zone].color);
   }
-  int bulbY = TUBE_BOTTOM + BULB_R - 16;
-  lcd.drawRoundRect(TUBE_X - 3, TUBE_TOP - 3, TUBE_W + 6, tubeH + 6, radius + 3, pageInk());
+  int bulbY = thermoBulbY();
   lcd.fillCircle(cx, bulbY, BULB_R, feelingZones[0].color);
-  lcd.fillRect(TUBE_X, TUBE_BOTTOM - 8, TUBE_W, 16, feelingZones[0].color);
-  lcd.drawFastVLine(TUBE_X - 3, TUBE_TOP + radius, TUBE_BOTTOM - TUBE_TOP - radius, pageInk());
-  lcd.drawFastVLine(TUBE_X + TUBE_W + 2, TUBE_TOP + radius, TUBE_BOTTOM - TUBE_TOP - radius, pageInk());
-  lcd.drawCircle(cx, bulbY, BULB_R, pageInk());
-  lcd.drawCircle(cx, bulbY, BULB_R - 1, pageInk());
-
-  for (int y = TUBE_TOP + 14; y < TUBE_BOTTOM - 4; y += 8) {
-    int len = (((y - TUBE_TOP) / 8) % 3 == 0) ? 16 : 8;
-    lcd.drawFastHLine(TUBE_X + TUBE_W + 8, y, len, pageInk());
-  }
 
   for (int zone = 0; zone < ZONE_COUNT; zone++) {
     int top = zoneBandTop(zone);
     int mid = top + zoneBandHeight() / 2;
     int boxY = mid - LABEL_H / 2;
     bool selected = zone == thermoZone;
-    uint16_t fill = selected ? feelingZones[zone].color : pageBg();
     uint16_t ink = selected ? zoneInk(zone) : pageInk();
-    lcd.drawLine(TUBE_X + TUBE_W + 4, mid, LABEL_X, boxY + LABEL_H / 2, pageInk());
-    lcd.fillRoundRect(LABEL_X, boxY, LABEL_W, LABEL_H, 12, fill);
-    lcd.drawRoundRect(LABEL_X, boxY, LABEL_W, LABEL_H, 12, pageInk());
+    if (selected) {
+      lcd.fillRoundRect(LABEL_X, boxY, LABEL_W, LABEL_H, LABEL_H / 2, feelingZones[zone].color);
+    }
     lcd.setTextDatum(textdatum_t::middle_center);
-    lcd.setFont(&fonts::Font2);
-    lcd.setTextColor(ink, fill);
+    lcd.setFont(&fonts::Font4);
+    lcd.setTextColor(ink, selected ? feelingZones[zone].color : pageBg());
     lcd.drawString(feelingZones[zone].name, LABEL_X + LABEL_W / 2, boxY + LABEL_H / 2);
   }
 
@@ -4103,43 +4089,30 @@ static const char *breathToolName() {
   return "Breathe";
 }
 
-static void drawHeart(int cx, int cy) {
-  lcd.fillCircle(cx - 8, cy - 2, 8, COL_ICON);
-  lcd.fillCircle(cx + 8, cy - 2, 8, COL_ICON);
-  lcd.fillTriangle(cx - 16, cy + 1, cx + 16, cy + 1, cx, cy + 18, COL_ICON);
-}
-
-static void drawHand(int cx, int cy) {
-  uint16_t ink = darkMode ? pageInk() : COL_BG;
-  lcd.fillRoundRect(cx - 12, cy, 24, 16, 6, ink);
-  lcd.fillRoundRect(cx - 10, cy - 14, 5, 16, 2, ink);
-  lcd.fillRoundRect(cx - 3, cy - 18, 5, 20, 2, ink);
-  lcd.fillRoundRect(cx + 4, cy - 14, 5, 16, 2, ink);
-}
-
-// The Tools card uses the briefcase picture. Soft edges mix with the
-// card color so the outline stays smooth.
-static void drawToolbox(int cx, int cy, uint16_t paper) {
-  uint16_t ink = darkMode ? pageInk() : (uint16_t)0x1082;
-  int left = cx - TOOLBOX_W / 2;
-  int top = cy - TOOLBOX_H / 2;
-  int ir = (ink >> 11) & 31;
-  int ig = (ink >> 5) & 63;
-  int ib = ink & 31;
+// Stamp one of the hub pictures. Soft edges mix with the card color.
+static void drawHubIcon(const uint16_t *px, const uint8_t *alpha, int w, int h,
+                        int cx, int cy, uint16_t paper) {
+  int left = cx - w / 2;
+  int top = cy - h / 2;
   int pr = (paper >> 11) & 31;
   int pg = (paper >> 5) & 63;
   int pb = paper & 31;
-  for (int row = 0; row < TOOLBOX_H; row++) {
-    for (int col = 0; col < TOOLBOX_W; col++) {
-      uint8_t alpha = TOOLBOX_ALPHA[row * TOOLBOX_W + col];
-      if (alpha < 8) {
+  for (int row = 0; row < h; row++) {
+    for (int col = 0; col < w; col++) {
+      int i = row * w + col;
+      uint8_t a = alpha[i];
+      if (a < 8) {
         continue;
       }
-      uint16_t color = ink;
-      if (alpha < 248) {
-        int r = pr + ((ir - pr) * alpha) / 255;
-        int g = pg + ((ig - pg) * alpha) / 255;
-        int b = pb + ((ib - pb) * alpha) / 255;
+      uint16_t icon = px[i];
+      uint16_t color = icon;
+      if (a < 248) {
+        int ir = (icon >> 11) & 31;
+        int ig = (icon >> 5) & 63;
+        int ib = icon & 31;
+        int r = pr + ((ir - pr) * a) / 255;
+        int g = pg + ((ig - pg) * a) / 255;
+        int b = pb + ((ib - pb) * a) / 255;
         color = (uint16_t)((r << 11) | (g << 5) | b);
       }
       lcd.drawPixel(left + col, top + row, color);
@@ -4147,10 +4120,21 @@ static void drawToolbox(int cx, int cy, uint16_t paper) {
   }
 }
 
-static void drawPencil(int cx, int cy) {
-  lcd.fillRoundRect(cx - 4, cy - 18, 8, 28, 2, darkMode ? pageInk() : COL_BG);
-  lcd.fillRect(cx - 4, cy - 18, 8, 5, 0xF518);
-  lcd.fillTriangle(cx - 4, cy + 10, cx + 4, cy + 10, cx, cy + 20, COL_ASK);
+static void drawHeart(int cx, int cy) {
+  drawHubIcon(HEART_RGB, HEART_A, HEART_W, HEART_H, cx, cy, softFill(COL_MINT));
+}
+
+static void drawHand(int cx, int cy) {
+  drawHubIcon(HAND_RGB, HAND_A, HAND_W, HAND_H, cx, cy, askFill());
+}
+
+// The Tools card uses a colored toolbox, like the heart, hand, and pencil.
+static void drawToolbox(int cx, int cy, uint16_t paper) {
+  drawHubIcon(TOOL_RGB, TOOL_A, TOOL_W, TOOL_H, cx, cy, paper);
+}
+
+static void drawPencil(int cx, int cy, uint16_t paper) {
+  drawHubIcon(PENCIL_RGB, PENCIL_A, PENCIL_W, PENCIL_H, cx, cy, paper);
 }
 
 static void drawCheck(int cx, int cy) {
@@ -4185,12 +4169,13 @@ static const int HUB_W = 372;
 
 static void paintHubCard(int x, int y, int w, int h, uint16_t fill, const char *title, const char *about) {
   lcd.fillRoundRect(x, y, w, h, 22, fill);
+  bool warm = !darkMode || fill == 0xEE11;
   lcd.setTextDatum(textdatum_t::middle_center);
   lcd.setFont(&fonts::Font4);
-  lcd.setTextColor(darkMode ? pageInk() : (uint16_t)0x1082, fill);
+  lcd.setTextColor(warm ? (uint16_t)0x1082 : pageInk(), fill);
   lcd.drawString(title, x + w / 2, y + 72);
   lcd.setFont(&fonts::Font2);
-  lcd.setTextColor(darkMode ? (uint16_t)0xB596 : (uint16_t)0x4A69, fill);
+  lcd.setTextColor(warm ? (uint16_t)0x4A69 : (uint16_t)0xB596, fill);
   lcd.drawString(about, x + w / 2, y + 98);
 }
 
@@ -4210,11 +4195,11 @@ static void paintZone() {
 
   paintHubCard(20, HUB_Y1, HUB_W, HUB_H, softFill(COL_MINT), "Feel Better", "Breathing and calming tools");
   if (!calmMode) drawHeart(206, HUB_Y1 + 28);
-  paintHubCard(408, HUB_Y1, HUB_W, HUB_H, softFill(COL_CREAM), "Ask for Help", "Tell your teacher what you need");
+  paintHubCard(408, HUB_Y1, HUB_W, HUB_H, askFill(), "Ask for Help", "Tell your teacher what you need");
   if (!calmMode) drawHand(594, HUB_Y1 + 28);
   if (expressOn && studentDrawingEnabled) {
     paintHubCard(20, HUB_Y2, HUB_W, HUB_H, softFill(COL_LILAC), "Draw or Write", "Express yourself another way");
-    if (!calmMode) drawPencil(206, HUB_Y2 + 28);
+    if (!calmMode) drawPencil(206, HUB_Y2 + 28, softFill(COL_LILAC));
     paintHubCard(408, HUB_Y2, HUB_W, HUB_H, softFill(COL_PALE), "Tools", "Race, schedule, and first then");
     if (!calmMode) drawToolbox(408 + HUB_W / 2, HUB_Y2 + 28, softFill(COL_PALE));
   } else {
@@ -4416,6 +4401,8 @@ static void startRace() {
   paintRace();
 }
 
+static bool accOn(int index);
+
 // Approved accommodations. A tap asks the teacher.
 static void paintAsk() {
   lcd.fillScreen(pageBg());
@@ -4446,10 +4433,11 @@ static void paintAsk() {
         continue;
       }
       int top = 128 + placed * (height + gap);
-      lcd.fillRoundRect(24, top, 752, height, 12, softFill(COL_CREAM));
+      uint16_t row = askFill();
+      lcd.fillRoundRect(24, top, 752, height, 12, row);
       lcd.setTextDatum(textdatum_t::middle_left);
       lcd.setFont(&fonts::Font2);
-      lcd.setTextColor(darkMode ? pageInk() : (uint16_t)0x1082, softFill(COL_CREAM));
+      lcd.setTextColor((darkMode && row != 0xEE11) ? pageInk() : (uint16_t)0x1082, row);
       lcd.drawString(ACCOMMODATIONS[i], 44, top + height / 2);
       placed++;
     }
@@ -4507,7 +4495,7 @@ static void paintExpress() {
   lcd.setFont(&fonts::Font2);
   lcd.drawString("Draw with chalk", 206, 286);
   paintHubCard(412, 150, 364, 220, COL_LILAC, "Notebook", "Type a few lines");
-  drawPencil(594, 178);
+  drawPencil(594, 178, COL_LILAC);
   paintBackButton();
   paintStatus();
   paintGearButton();
@@ -4524,7 +4512,7 @@ static void paintFeedback() {
   lcd.setTextColor(pageInk(), pageBg());
   lcd.drawString("Did that help?", 400, 96);
   const int xs[] = {24, 282, 540};
-  const uint16_t fills[] = {softFill(COL_MINT), softFill(COL_PALE), softFill(COL_CREAM)};
+  const uint16_t fills[] = {softFill(COL_MINT), softFill(COL_PALE), askFill()};
   const char *labels[] = {"Yes", "Try again", "Not yet"};
   for (int i = 0; i < 3; i++) {
     lcd.fillRoundRect(xs[i], 132, 236, 156, 22, fills[i]);
@@ -4538,7 +4526,8 @@ static void paintFeedback() {
     }
     lcd.setTextDatum(textdatum_t::middle_center);
     lcd.setFont(&fonts::Font4);
-    lcd.setTextColor(darkMode ? pageInk() : (uint16_t)0x1082, fills[i]);
+    bool warm = !darkMode || fills[i] == 0xEE11;
+    lcd.setTextColor(warm ? (uint16_t)0x1082 : pageInk(), fills[i]);
     lcd.drawString(labels[i], xs[i] + 118, 244);
   }
   char needLine[40];
@@ -4713,7 +4702,6 @@ static void paintSchedule() {
 static void paintFirstChoices();
 static void paintScheduleChoices();
 static void paintAccSettings();
-static bool accOn(int index);
 
 static void paintTools() {
   lcd.fillScreen(pageBg());
@@ -4734,7 +4722,7 @@ static void paintTools() {
   }
   if (toolPage == 5) {
     lcd.drawString("Strategy order", 24, 30);
-    paintTopButton(DONE_X, DONE_Y, DONE_W, DONE_H, "Back", COL_ROW);
+    paintSoftButton(DONE_X, DONE_Y, DONE_W, DONE_H, "Back", settingsCard(), settingsInk());
     lcd.setFont(&fonts::Font2);
     for (int i = 0; i < 4; i++) {
       int top = 80 + i * 70;
@@ -4743,14 +4731,14 @@ static void paintTools() {
       if (bit == TOOL_GROUND) name = "See, hear, feel";
       else if (bit == TOOL_FIRST) name = "First, then";
       else if (bit == TOOL_SCHED) name = "Schedule";
-      lcd.fillRoundRect(24, top, 752, 58, 12, COL_ROW);
-      lcd.setTextColor(COL_FG, COL_ROW);
+      lcd.fillRoundRect(24, top, 752, 58, 12, settingsCard());
+      lcd.setTextColor(settingsInk(), settingsCard());
       lcd.setTextDatum(textdatum_t::middle_left);
       lcd.drawString(name, 44, top + 29);
       if (i > 0) {
-        lcd.fillRoundRect(620, top + 10, 140, 38, 8, COL_TRY);
+        lcd.fillRoundRect(620, top + 10, 140, 38, 8, settingsOn());
         lcd.setTextDatum(textdatum_t::middle_center);
-        lcd.setTextColor(darkMode ? pageInk() : (uint16_t)0x1082, COL_TRY);
+        lcd.setTextColor(settingsInk(), settingsOn());
         lcd.drawString("Up", 690, top + 29);
       }
     }
@@ -4764,41 +4752,41 @@ static void paintTools() {
     TOOL_ZONES, TOOL_GROUND, TOOL_FIRST, TOOL_SCHED, TOOL_BREATH
   };
   lcd.drawString("Tools for this student", 24, 30);
-  paintTopButton(DONE_X, DONE_Y, DONE_W, DONE_H, "Back", COL_ROW);
+  paintSoftButton(DONE_X, DONE_Y, DONE_W, DONE_H, "Back", settingsCard(), settingsInk());
   for (int i = 0; i < 5; i++) {
     int top = 68 + i * 62;
-    lcd.fillRoundRect(24, top, 752, 54, 12, COL_ROW);
+    lcd.fillRoundRect(24, top, 752, 54, 12, settingsCard());
     lcd.setFont(&fonts::Font2);
-    lcd.setTextColor(COL_FG, COL_ROW);
+    lcd.setTextColor(settingsInk(), settingsCard());
     lcd.setTextDatum(textdatum_t::middle_left);
     lcd.drawString(names[i], 44, top + 27);
     bool on = toolOn(bits[i]);
-    uint16_t fill = on ? COL_TRY : COL_FOOT;
+    uint16_t fill = on ? settingsOn() : settingsOff();
     lcd.fillRoundRect(620, top + 8, 140, 38, 8, fill);
     lcd.setTextDatum(textdatum_t::middle_center);
-    lcd.setTextColor(COL_FG, fill);
+    lcd.setTextColor(settingsInk(), fill);
     lcd.drawString(on ? "On" : "Off", 690, top + 27);
     if (i == 2 || i == 3) {
-      lcd.fillRoundRect(470, top + 8, 136, 38, 8, COL_FOOT);
-      lcd.setTextColor(COL_FG, COL_FOOT);
+      lcd.fillRoundRect(470, top + 8, 136, 38, 8, settingsOff());
+      lcd.setTextColor(settingsInk(), settingsOff());
       lcd.drawString("Words", 538, top + 27);
     }
   }
   int accTop = 376;
-  lcd.fillRoundRect(24, accTop, 752, 40, 10, COL_ROW);
+  lcd.fillRoundRect(24, accTop, 752, 40, 10, settingsCard());
   lcd.setFont(&fonts::Font2);
-  lcd.setTextColor(COL_FG, COL_ROW);
+  lcd.setTextColor(settingsInk(), settingsCard());
   lcd.setTextDatum(textdatum_t::middle_left);
   lcd.drawString("Accommodations", 44, accTop + 20);
-  lcd.fillRoundRect(24, 424, 360, 44, 10, COL_ROW);
-  lcd.fillRoundRect(400, 424, 376, 44, 10, COL_ROW);
-  lcd.setTextColor(COL_FG, COL_ROW);
+  lcd.fillRoundRect(24, 424, 360, 44, 10, settingsCard());
+  lcd.fillRoundRect(400, 424, 376, 44, 10, settingsCard());
+  lcd.setTextColor(settingsInk(), settingsCard());
   lcd.drawString("Strategy order", 40, 446);
   lcd.drawString("Calm screen", 416, 446);
-  uint16_t calmFill = calmMode ? COL_TRY : COL_FOOT;
+  uint16_t calmFill = calmMode ? settingsOn() : settingsOff();
   lcd.fillRoundRect(620, 432, 140, 28, 8, calmFill);
   lcd.setTextDatum(textdatum_t::middle_center);
-  lcd.setTextColor(calmMode ? (darkMode ? pageInk() : (uint16_t)COL_BG) : (uint16_t)COL_FG, calmFill);
+  lcd.setTextColor(settingsInk(), calmFill);
   lcd.drawString(calmMode ? "On" : "Off", 690, 446);
   lcd.setTextDatum(textdatum_t::top_left);
 }
@@ -4808,18 +4796,18 @@ static void paintAccSettings() {
   lcd.setFont(&fonts::Font2);
   lcd.setTextColor(pageInk(), pageBg());
   lcd.drawString("Accommodations", 24, 30);
-  paintTopButton(DONE_X, DONE_Y, DONE_W, DONE_H, "Back", COL_ROW);
+  paintSoftButton(DONE_X, DONE_Y, DONE_W, DONE_H, "Back", settingsCard(), settingsInk());
   for (int i = 0; i < ACC_COUNT; i++) {
     int top = 56 + i * 40;
-    lcd.fillRoundRect(24, top, 752, 36, 8, COL_ROW);
-    lcd.setTextColor(COL_FG, COL_ROW);
+    lcd.fillRoundRect(24, top, 752, 36, 8, settingsCard());
+    lcd.setTextColor(settingsInk(), settingsCard());
     lcd.setTextDatum(textdatum_t::middle_left);
     lcd.drawString(ACCOMMODATIONS[i], 44, top + 18);
     bool on = accOn(i);
-    uint16_t fill = on ? COL_TRY : COL_FOOT;
+    uint16_t fill = on ? settingsOn() : settingsOff();
     lcd.fillRoundRect(620, top + 4, 140, 28, 6, fill);
     lcd.setTextDatum(textdatum_t::middle_center);
-    lcd.setTextColor(on ? (darkMode ? pageInk() : (uint16_t)COL_BG) : (uint16_t)COL_FG, fill);
+    lcd.setTextColor(settingsInk(), fill);
     lcd.drawString(on ? "On" : "Off", 690, top + 18);
   }
   lcd.setTextDatum(textdatum_t::top_left);
@@ -4842,52 +4830,41 @@ static void showMainMenu() {
   paintZone();
 }
 
-// Tell the teacher about one real choice. Opening a list does not
-// call this. K may see a short word, but the note uses the full one.
-static void notifyItem(const Item *item, const char *choiceText) {
+// One teacher note. waitForReply keeps the bottom line on Sending
+// until the teacher answers. A helped or not-yet note does not.
+static void sendNotice(uint8_t asks, const char *feeling, const char *choice, bool waitForReply) {
   ClearNote note = {};
   note.version = CLEAR_LINK_VERSION;
   note.kind = CLEAR_KIND_NOTICE;
-  note.asksTeacher = itemAsks(item) ? 1 : 0;
+  note.asksTeacher = asks;
   note.answer = CLEAR_ANSWER_NONE;
   note.eventId = takeEventId();
-  waitingId = note.eventId;
-  teacherReply = CLEAR_ANSWER_NONE;
-  noticeSent = false;
-  sendFailed = false;
   note.timeSent = (uint32_t)time(nullptr);
   copyField(note.student, sizeof(note.student), studentName);
-  copyField(note.feeling, sizeof(note.feeling), item->topic);
-  copyField(note.choice, sizeof(note.choice), choiceText);
-  rememberChoice(choiceText);
+  copyField(note.feeling, sizeof(note.feeling), feeling);
+  copyField(note.choice, sizeof(note.choice), choice);
+  if (waitForReply) {
+    waitingId = note.eventId;
+    teacherReply = CLEAR_ANSWER_NONE;
+    noticeSent = false;
+    sendFailed = false;
+    rememberChoice(choice);
+  }
   outboundNote = note;
   needSend = true;
   nextBleMs = 0;
   saveClock();
 }
 
+// Tell the teacher about one real choice. Opening a list does not
+// call this. K may see a short word, but the note uses the full one.
+static void notifyItem(const Item *item, const char *choiceText) {
+  sendNotice(itemAsks(item) ? 1 : 0, item->topic, choiceText, true);
+}
+
 // Yellow and red tell the teacher. Blue and green stay on the panel.
 static void notifyZone() {
-  const FeelingZone *zone = &feelingZones[thermoZone];
-  ClearNote note = {};
-  note.version = CLEAR_LINK_VERSION;
-  note.kind = CLEAR_KIND_NOTICE;
-  note.asksTeacher = 1;
-  note.answer = CLEAR_ANSWER_NONE;
-  note.eventId = takeEventId();
-  waitingId = note.eventId;
-  teacherReply = CLEAR_ANSWER_NONE;
-  noticeSent = false;
-  sendFailed = false;
-  note.timeSent = (uint32_t)time(nullptr);
-  copyField(note.student, sizeof(note.student), studentName);
-  copyField(note.feeling, sizeof(note.feeling), zone->name);
-  copyField(note.choice, sizeof(note.choice), "My energy is in this zone");
-  rememberChoice("My energy is in this zone");
-  outboundNote = note;
-  needSend = true;
-  nextBleMs = 0;
-  saveClock();
+  sendNotice(1, feelingZones[thermoZone].name, "My energy is in this zone", true);
 }
 
 static void commitZone() {
@@ -4923,20 +4900,8 @@ static void reportCope(bool helped) {
   if (choice[0] == 0) {
     return;
   }
-  ClearNote note = {};
-  note.version = CLEAR_LINK_VERSION;
-  note.kind = CLEAR_KIND_NOTICE;
-  note.asksTeacher = helped ? CLEAR_ASK_HELPED : CLEAR_ASK_NOTYET;
-  note.answer = CLEAR_ANSWER_NONE;
-  note.eventId = takeEventId();
-  note.timeSent = (uint32_t)time(nullptr);
-  copyField(note.student, sizeof(note.student), studentName);
-  copyField(note.feeling, sizeof(note.feeling), feelingZones[thermoZone].name);
-  copyField(note.choice, sizeof(note.choice), choice);
-  outboundNote = note;
-  needSend = true;
-  nextBleMs = 0;
-  saveClock();
+  sendNotice(helped ? CLEAR_ASK_HELPED : CLEAR_ASK_NOTYET,
+             feelingZones[thermoZone].name, choice, false);
 }
 
 // Yellow, orange, and red tell the teacher which tool the student opened.
@@ -4944,25 +4909,7 @@ static void notifyTool(const char *choice) {
   if (!feelingZones[thermoZone].tellTeacher) {
     return;
   }
-  ClearNote note = {};
-  note.version = CLEAR_LINK_VERSION;
-  note.kind = CLEAR_KIND_NOTICE;
-  note.asksTeacher = 1;
-  note.answer = CLEAR_ANSWER_NONE;
-  note.eventId = takeEventId();
-  waitingId = note.eventId;
-  teacherReply = CLEAR_ANSWER_NONE;
-  noticeSent = false;
-  sendFailed = false;
-  note.timeSent = (uint32_t)time(nullptr);
-  copyField(note.student, sizeof(note.student), studentName);
-  copyField(note.feeling, sizeof(note.feeling), feelingZones[thermoZone].name);
-  copyField(note.choice, sizeof(note.choice), choice);
-  rememberChoice(choice);
-  outboundNote = note;
-  needSend = true;
-  nextBleMs = 0;
-  saveClock();
+  sendNotice(1, feelingZones[thermoZone].name, choice, true);
 }
 
 static bool accOn(int index) {
@@ -5025,65 +4972,9 @@ static bool usesFooter() {
          currentScreen != SCREEN_DRAW_MENU && currentScreen != SCREEN_DRAW_CANVAS;
 }
 
-static const char *instructionLine() {
-  if (currentScreen == SCREEN_GROUND) {
-    if (groundStep >= 5) return "Find a sound around you.";
-    if (groundStep >= 3) return "Find something to touch.";
-    return "Find something to see.";
-  }
-  if (currentScreen == SCREEN_SELECTED) {
-    if (breathRunning) return "In, hold, out, hold.";
-    if (breathOffer) return "Want another breath?";
-    return "Press begin and breathe with me.";
-  }
-  if (currentScreen == SCREEN_FIRST) return "Do the first part, then the next.";
-  if (currentScreen == SCREEN_SCHED) return "This block is now. Then the next.";
-  if (currentScreen == SCREEN_ZONE) return "Pick what would help right now.";
-  if (currentScreen == SCREEN_SOOTHE) return "Pick a calming tool.";
-  if (currentScreen == SCREEN_PLAN) return "Pick a tool.";
-  if (currentScreen == SCREEN_RACE) return "Bridger walks for five minutes. He will wait.";
-  if (currentScreen == SCREEN_ASK) return "Tap what you need to ask.";
-  if (currentScreen == SCREEN_EXPRESS) return "Draw on the board or write.";
-  if (currentScreen == SCREEN_FEED) return "Did that help?";
-  if (currentScreen == SCREEN_THERMO) return "Slide to your feeling, then tap This is me.";
-  if (currentScreen == SCREEN_WRITE) return "Tap a line and type.";
-  return "Hello. Show how you feel.";
-}
-
-static void paintRace();
-
-static void replayInstruction() {
-  bridgerSay(instructionLine());
-  speakLine(instructionLine());
-  if (currentScreen == SCREEN_RACE) {
-    paintRace();
-  } else if (usesFooter()) {
-    paintStatus();
-  }
-}
-
 static void sendHelp() {
-  ClearNote note = {};
-  note.version = CLEAR_LINK_VERSION;
-  note.kind = CLEAR_KIND_NOTICE;
-  note.asksTeacher = 1;
-  note.answer = CLEAR_ANSWER_NONE;
-  note.eventId = takeEventId();
-  waitingId = note.eventId;
-  teacherReply = CLEAR_ANSWER_NONE;
-  noticeSent = false;
-  sendFailed = false;
-  note.timeSent = (uint32_t)time(nullptr);
-  copyField(note.student, sizeof(note.student), studentName);
-  copyField(note.feeling, sizeof(note.feeling), feelingZones[thermoZone].name);
-  copyField(note.choice, sizeof(note.choice), "I need help");
-  rememberChoice("I need help");
+  sendNotice(1, feelingZones[thermoZone].name, "I need help", true);
   bridgerSay("I told your teacher.");
-  speakLine("I told your teacher.");
-  outboundNote = note;
-  needSend = true;
-  nextBleMs = 0;
-  saveClock();
   if (usesFooter()) {
     paintStatus();
   }
@@ -5096,31 +4987,24 @@ static uint16_t softFill(uint16_t color) {
   return color;
 }
 
+// Dark mode Ask for Help stays the light-mode cream, a step more orange.
+static uint16_t askFill() {
+  if (calmMode) {
+    return softFill(COL_CREAM);
+  }
+  if (darkMode) {
+    return 0xEE11;
+  }
+  return COL_CREAM;
+}
+
 // An accommodation always asks the teacher, on every zone.
 static void askAccommodation(int index) {
   if (!accOn(index)) {
     return;
   }
-  ClearNote note = {};
-  note.version = CLEAR_LINK_VERSION;
-  note.kind = CLEAR_KIND_NOTICE;
-  note.asksTeacher = CLEAR_ASK_AID;
-  note.answer = CLEAR_ANSWER_NONE;
-  note.eventId = takeEventId();
-  waitingId = note.eventId;
-  teacherReply = CLEAR_ANSWER_NONE;
-  noticeSent = false;
-  sendFailed = false;
-  note.timeSent = (uint32_t)time(nullptr);
-  copyField(note.student, sizeof(note.student), studentName);
-  copyField(note.feeling, sizeof(note.feeling), feelingZones[thermoZone].name);
-  copyField(note.choice, sizeof(note.choice), ACCOMMODATIONS[index]);
-  rememberChoice(ACCOMMODATIONS[index]);
+  sendNotice(CLEAR_ASK_AID, feelingZones[thermoZone].name, ACCOMMODATIONS[index], true);
   bridgerSay("I asked your teacher.");
-  outboundNote = note;
-  needSend = true;
-  nextBleMs = 0;
-  saveClock();
   paintAsk();
 }
 
@@ -5445,7 +5329,7 @@ static void resetDrawingBoard() {
     return;
   }
   paintDrawingCanvas();
-  setDrawStatus("Board reset. Previous teacher copy is unchanged");
+  setDrawStatus("Board reset");
 }
 
 // The row the student pressed. A list opens the next page and does
@@ -5829,7 +5713,7 @@ static void repaintCurrent() {
 
 static void paintLock() {
   lcd.fillScreen(pageBg());
-  lcd.setTextDatum(textdatum_t::top_left);
+  lcd.setTextDatum(textdatum_t::middle_left);
   lcd.setTextColor(pageInk(), pageBg());
   lcd.setFont(&fonts::Font4);
   const char *title = "Class PIN";
@@ -5838,9 +5722,9 @@ static void paintLock() {
   } else if (lockJob == LOCK_SET_PASS || lockJob == LOCK_SET_PASS_AGAIN || lockJob == LOCK_SETTINGS) {
     title = "Settings";
   }
-  lcd.drawString(title, 24, 28);
+  lcd.drawString(title, 16, 36);
   lcd.setFont(&fonts::Font2);
-  lcd.drawString(lockNote, 24, 72);
+  lcd.drawString(lockNote, 16, 78);
   char dots[8] = "_ _ _ _";
   int filled = (int)strlen(pinEntry);
   if (filled > 4) {
@@ -5849,8 +5733,9 @@ static void paintLock() {
   for (int i = 0; i < filled; i++) {
     dots[i * 2] = '*';
   }
+  lcd.setTextDatum(textdatum_t::middle_left);
   lcd.setFont(&fonts::Font4);
-  lcd.drawString(dots, 24, 108);
+  lcd.drawString(dots, 16, 120);
   static const char *labels[] = {
     "1", "2", "3", "4", "5", "6", "7", "8", "9", "C", "0", "<"
   };
@@ -5862,7 +5747,7 @@ static void paintLock() {
   for (int i = 0; i < 12; i++) {
     int x = left + (i % 3) * (padW + gap);
     int y = top + (i / 3) * (padH + gap);
-    lcd.fillRoundRect(x, y, padW, padH, 12, COL_ROW);
+    lcd.fillRoundRect(x, y, padW, padH, 10, COL_ROW);
     lcd.setTextDatum(textdatum_t::middle_center);
     lcd.setFont(&fonts::Font4);
     lcd.setTextColor(COL_FG, COL_ROW);
@@ -5872,6 +5757,7 @@ static void paintLock() {
     paintBackButton();
   }
   lcd.setTextDatum(textdatum_t::top_left);
+  paintBattery();
 }
 
 static void forgetBonds() {
@@ -5907,10 +5793,20 @@ static void finishUnlock() {
   startTeacherLink();
   activityMs = millis();
   pinEntry[0] = 0;
+  screenAsleep = false;
+  applyBrightness();
   if (privacyCover) {
     privacyCover = false;
-    currentScreen = coveredScreen;
-    repaintCurrent();
+    stopExpressTimer();
+    breathRunning = false;
+    breathFromTools = false;
+    if (toolOn(TOOL_ZONES)) {
+      currentScreen = SCREEN_THERMO;
+      paintThermometer();
+    } else {
+      currentScreen = SCREEN_ZONE;
+      paintZone();
+    }
     return;
   }
   currentScreen = SCREEN_HELLO;
@@ -6066,6 +5962,24 @@ static void coverPrivacy() {
   paintLock();
 }
 
+// Five quiet minutes turn the glass off. The PIN page is drawn while
+// the light is out, so the first tap only wakes the panel.
+static void sleepPanel() {
+  if (screenAsleep) {
+    return;
+  }
+  lcd.setBrightness(0);
+  coverPrivacy();
+  screenAsleep = true;
+}
+
+static void wakePanel() {
+  screenAsleep = false;
+  activityMs = millis();
+  applyBrightness();
+  paintLock();
+}
+
 // Runs once. Order matters: the expander and the saved settings are
 // ready before the panel starts, and the backlight level is applied
 // after init() because init() is what attaches PWM to pin 2.
@@ -6078,6 +5992,13 @@ void setup() {
   initExpander();
   loadSettings();          // name, brightness, grade, and class PIN
   startClock();
+  // Drawings live in the SPIFFS area of flash. Mount it before the
+  // screen starts, so a first-time prepare does not fight the picture.
+  // A later start leaves saved drawings alone.
+  drawStorageReady = SPIFFS.begin(false);
+  if (!drawStorageReady) {
+    drawStorageReady = SPIFFS.begin(true);
+  }
   lcd.init();              // start the panel with the wiring stored above
   lcd.setRotation(0);      // 0 matches the touch map. Another value would move taps off the buttons.
   // The panel start also uses these two pins. Take them back for the
@@ -6092,8 +6013,6 @@ void setup() {
     }
   }
   applyBrightness();
-  startAudio();
-  drawStorageReady = SPIFFS.begin(false);
   currentDrawingId = newDrawingId();
 
   // The greeting stays hidden until the class PIN is entered.
@@ -6126,6 +6045,19 @@ static bool bleAuthed = false;
 static bool settingsReplyUsb = true;
 static int authFails = 0;
 static unsigned long authLockUntil = 0;
+
+class PanelServerCallbacks : public BLEServerCallbacks {
+  void onConnect(BLEServer *server) override {
+    (void)server;
+    panelWebConnected = true;
+  }
+  void onDisconnect(BLEServer *server) override {
+    (void)server;
+    panelWebConnected = false;
+    bleAuthed = false;
+    resumePanelAd();
+  }
+};
 
 class PanelWriteCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *characteristic) override {
@@ -6459,10 +6391,12 @@ static void handleSettingsLine(const char *line, bool fromUsb) {
 static void startPanelRadio() {
   ensureRadio();
   BLEServer *server = BLEDevice::createServer();
+  server->setCallbacks(new PanelServerCallbacks());
   BLEService *service = server->createService(PANEL_SERVICE_UUID);
   panelChar = service->createCharacteristic(
     PANEL_CHAR_UUID,
-    BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_NOTIFY
+    BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR |
+    BLECharacteristic::PROPERTY_NOTIFY
   );
   panelChar->addDescriptor(new BLE2902());
   panelChar->setCallbacks(new PanelWriteCallbacks());
@@ -6505,7 +6439,6 @@ static void servicePanelCommands() {
 void loop() {
   servicePanelCommands();
   serviceOcrTextPacket();
-  serviceAudio();
 
   if (millis() - clockMs >= 60000) {
     clockMs = millis();
@@ -6518,21 +6451,41 @@ void loop() {
     settings = pendingStudentSettings;
     studentSettingsReady = false;
     interrupts();
-    bool enabled = settings.drawingEnabled != 0;
-    if (studentDrawingEnabled != enabled) {
-      studentDrawingEnabled = enabled;
-      prefs.begin("clear", false);
-      prefs.putBool("drawEnabled", studentDrawingEnabled);
-      prefs.end();
-      if (!studentDrawingEnabled &&
-          (currentScreen == SCREEN_DRAW_CANVAS ||
-           currentScreen == SCREEN_DRAW_MENU)) {
-        if (currentScreen == SCREEN_DRAW_CANVAS) {
-          finishDrawingStroke();
+    bool draw = settings.drawingEnabled != 0;
+    bool express = settings.expressOn != 0;
+    bool calm = settings.calmMode != 0;
+    bool beaver = settings.bridgerOn != 0;
+    uint8_t tools = settings.toolMask & TOOL_ALL;
+    bool changed = draw != studentDrawingEnabled || express != expressOn ||
+                   calm != calmMode || beaver != bridgerOn || tools != toolMask;
+    if (changed) {
+      bool leaveDraw = studentDrawingEnabled && !draw &&
+                       (currentScreen == SCREEN_DRAW_CANVAS ||
+                        currentScreen == SCREEN_DRAW_MENU ||
+                        currentScreen == SCREEN_EXPRESS);
+      bool leaveTool = ((toolMask & TOOL_ZONES) && !(tools & TOOL_ZONES) &&
+                        currentScreen == SCREEN_THERMO) ||
+                       ((toolMask & TOOL_GROUND) && !(tools & TOOL_GROUND) &&
+                        currentScreen == SCREEN_GROUND) ||
+                       ((toolMask & TOOL_FIRST) && !(tools & TOOL_FIRST) &&
+                        currentScreen == SCREEN_FIRST) ||
+                       ((toolMask & TOOL_SCHED) && !(tools & TOOL_SCHED) &&
+                        currentScreen == SCREEN_SCHED);
+      if (leaveDraw && currentScreen == SCREEN_DRAW_CANVAS) {
+        finishDrawingStroke();
+      }
+      studentDrawingEnabled = draw;
+      expressOn = express;
+      calmMode = calm;
+      bridgerOn = beaver;
+      toolMask = tools;
+      saveSettings();
+      if (!screenAsleep && currentScreen != SCREEN_LOCK) {
+        if (leaveDraw || leaveTool) {
+          showMainMenu();
+        } else {
+          repaintCurrent();
         }
-        showMainMenu();
-      } else if (currentScreen == SCREEN_MENU && crumbTop == 0) {
-        showMainMenu();
       }
     }
   }
@@ -6669,7 +6622,12 @@ void loop() {
   int32_t tx = 0;
   int32_t ty = 0;
   bool touchDown = readFinger(&tx, &ty);
-  if (currentScreen == SCREEN_DRAW_CANVAS && !drawingOcrVisible && !expressTimeUp) {
+  bool woke = false;
+  if (screenAsleep && touchDown && !touchWasDown) {
+    wakePanel();
+    woke = true;
+  }
+  if (!woke && currentScreen == SCREEN_DRAW_CANVAS && !drawingOcrVisible && !expressTimeUp) {
     if (!touchDown) {
       finishDrawingStroke();
     } else if (!drawingStroke && !touchWasDown &&
@@ -6708,7 +6666,7 @@ void loop() {
       paintThermometer();
     }
   }
-  if (touchDown && !touchWasDown && (millis() - tapMs) >= TAP_GAP_MS) {
+  if (!woke && touchDown && !touchWasDown && (millis() - tapMs) >= TAP_GAP_MS) {
     tapMs = millis();
     activityMs = millis();
     if (currentScreen == SCREEN_LOCK) {
@@ -6754,8 +6712,6 @@ void loop() {
     // any other tap skips ahead to the thermometer.
     if (usesFooter() && inBox(tx, ty, 8, 424, 96, 48)) {
       sendHelp();
-    } else if (usesFooter() && inBox(tx, ty, 112, 424, 108, 48)) {
-      replayInstruction();
     } else if (onGearScreen && inBox(tx, ty, GEAR_X, GEAR_Y, GEAR_W, GEAR_H)) {
       openSettings();
     } else if (currentScreen == SCREEN_HELLO) {
@@ -6888,26 +6844,8 @@ void loop() {
           paintSoothe();
         }
       } else if (inBox(tx, ty, 160, 312, 480, 48)) {
-        ClearNote note = {};
-        note.version = CLEAR_LINK_VERSION;
-        note.kind = CLEAR_KIND_NOTICE;
-        note.asksTeacher = 1;
-        note.answer = CLEAR_ANSWER_NONE;
-        note.eventId = takeEventId();
-        waitingId = note.eventId;
-        teacherReply = CLEAR_ANSWER_NONE;
-        noticeSent = false;
-        sendFailed = false;
-        note.timeSent = (uint32_t)time(nullptr);
-        copyField(note.student, sizeof(note.student), studentName);
-        copyField(note.feeling, sizeof(note.feeling), feelingZones[thermoZone].name);
-        copyField(note.choice, sizeof(note.choice), "I need my teacher");
-        rememberChoice("I need my teacher");
+        sendNotice(1, feelingZones[thermoZone].name, "I need my teacher", true);
         bridgerSay("I asked your teacher.");
-        outboundNote = note;
-        needSend = true;
-        nextBleMs = 0;
-        saveClock();
         paintFeedback();
       }
     } else if (currentScreen == SCREEN_GROUND) {
@@ -7078,20 +7016,16 @@ void loop() {
       }
     } else if (currentScreen == SCREEN_DRAW_CANVAS && !expressTimeUp) {
       if (inBox(tx, ty, DRAW_BACK_X, DRAW_BACK_Y, DRAW_BACK_W, DRAW_BACK_H)) {
-        if (drawingSegmentCount == 0) {
-          if (fromExpress) {
-            fromExpress = false;
-            currentScreen = SCREEN_EXPRESS;
-            paintExpress();
-          } else {
-            openDrawingMenu();
-          }
-        } else if (drawingSyncPending || drawingSyncWaitingForAck) {
-          exitAfterDrawingSync = true;
-          setDrawStatus("Finishing transfer before leaving the board");
-        } else if (prepareDrawingSync(false)) {
-          exitAfterDrawingSync = true;
-          setDrawStatus("Sending drawing before leaving the board");
+        finishDrawingStroke();
+        if (drawingSegmentCount > 0) {
+          saveDrawingFile();
+        }
+        if (fromExpress) {
+          fromExpress = false;
+          currentScreen = SCREEN_EXPRESS;
+          paintExpress();
+        } else {
+          openDrawingMenu();
         }
       } else if (inBox(tx, ty, DRAW_READ_X, DRAW_BUTTON_Y, 88, DRAW_BUTTON_H)) {
         if (drawingOcrVisible) {
@@ -7120,11 +7054,12 @@ void loop() {
           }
         }
       } else if (inBox(tx, ty, DRAW_SAVE_X, DRAW_BUTTON_Y, 80, DRAW_BUTTON_H)) {
-        prepareDrawingSync(false);
+        saveDrawingFile();
       } else if (inBox(tx, ty, DRAW_RESET_X, DRAW_BUTTON_Y, 104, DRAW_BUTTON_H)) {
         resetDrawingBoard();
       } else if (inBox(tx, ty, DRAW_NEW_X, DRAW_BUTTON_Y, 96, DRAW_BUTTON_H)) {
-        prepareDrawingSync(true);
+        resetDrawingBoard();
+        setDrawStatus("New board ready");
       }
       // Detail page: Back, or Begin on the breathing screen.
     } else if (currentScreen == SCREEN_SELECTED) {
@@ -7188,7 +7123,7 @@ void loop() {
         expressOn = !expressOn;
         saveSettings();
         paintSettings();
-      } else if (inBox(tx, ty, 360, 8, 168, 44)) {
+      } else if (inBox(tx, ty, 360, HEADER_Y, 168, 44)) {
         toolPage = 0;
         currentScreen = SCREEN_TOOLS;
         paintTools();
@@ -7249,9 +7184,9 @@ void loop() {
   }
   if (touchDown) {
     activityMs = millis();
-  } else if (!breathRunning && !raceRunning && classPinSet && currentScreen != SCREEN_LOCK &&
+  } else if (!breathRunning && !raceRunning && classPinSet && !screenAsleep &&
              (millis() - activityMs) >= PRIVACY_IDLE_MS) {
-    coverPrivacy();
+    sleepPanel();
   }
   // Remember this pass so the next one can tell a new press from a held finger.
   // The teacher search runs only after the finger is up, so a tap is

@@ -3,372 +3,1180 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>CLEAR</title>
+  <title>CLEAR Bridge</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400;1,9..144,600&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
+    *, *::before, *::after { box-sizing: border-box; }
     :root {
-      color-scheme: light;
-      --paper: #f3ecdf;
-      --ink: #243028;
-      --muted: #5d6a60;
-      --card: #fffaf3;
-      --line: #e4d7c4;
-      --green: #2f6b4f;
-      --leaf: #7ea36a;
-      --orange: #d17a32;
-      --gold: #e7c98a;
-      --sky: #e7f0ea;
+      color-scheme: dark;
+      --bg:        #0b0806;
+      --bg-2:      #100c09;
+      --surface:   #17110d;
+      --surface-2: #1e1712;
+      --border:    #2c221a;
+      --border-lt: #3d3026;
+      --text:      #fbf3e8;
+      --muted:     #b8a794;
+      --dim:       #7d6c5c;
+      --mint:      #e8914f;
+      --mint-lt:   #ffb57d;
+      --mint-deep: #a85a26;
+      --mint-dim:  rgba(232,145,79,.12);
+      --amber:     #f3e3cc;
+      --amber-lt:  #fbf3e8;
+      --amber-dim: rgba(243,227,204,.13);
+      --coral:     #ff8a7a;
+      --track:     #251c15;
+      --serif: "Fraunces", Georgia, serif;
+      --sans:  "Outfit", "Segoe UI", sans-serif;
     }
-    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; scroll-padding-top: 84px; }
     body {
-      margin: 0;
-      color: var(--ink);
-      background:
-        radial-gradient(circle at top left, #fff 0, transparent 28%),
-        linear-gradient(180deg, #f7f3ea 0%, var(--paper) 40%, #efe4d2 100%);
-      font-family: "Segoe UI", "Trebuchet MS", sans-serif;
-      min-height: 100vh;
+      margin: 0; min-height: 100vh;
+      background: var(--bg); color: var(--text);
+      font-family: var(--sans); font-size: 16px; line-height: 1.65;
+      overflow-x: hidden;
     }
-    main { max-width: 980px; margin: 0 auto; padding: 28px 20px 72px; }
-    header { display: flex; gap: 14px; align-items: center; margin-bottom: 22px; }
+    ::selection { background: var(--mint); color: var(--bg); }
+    p { margin: 0 0 1em; }
+    h1, h2, h3 { margin: 0; }
+    a { color: inherit; }
+
+    /* ── Background atmosphere ── */
+    .sky { position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
+    .sky .orb { position: absolute; border-radius: 50%; filter: blur(10px); }
+    .sky .orb.m { width: 820px; height: 820px; top: -360px; left: -220px;
+      background: radial-gradient(circle, rgba(232,145,79,.13) 0%, transparent 65%);
+      animation: drift 14s ease-in-out infinite; }
+    .sky .orb.a { width: 640px; height: 640px; bottom: -280px; right: -200px;
+      background: radial-gradient(circle, rgba(243,227,204,.09) 0%, transparent 65%);
+      animation: drift 18s ease-in-out infinite reverse; }
+    .sky .grid {
+      position: absolute; inset: 0;
+      background-image: radial-gradient(rgba(184,167,148,.11) 1px, transparent 1px);
+      background-size: 28px 28px;
+      mask-image: linear-gradient(to bottom, #000 0%, transparent 70%);
+      -webkit-mask-image: linear-gradient(to bottom, #000 0%, transparent 70%);
+    }
+    @keyframes drift {
+      0%,100% { transform: translate(0,0) scale(1); }
+      50%     { transform: translate(40px,30px) scale(1.08); }
+    }
+
+    /* ── Nav ── */
+    nav.top {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 4;
+      display: flex; align-items: center; gap: 24px;
+      padding: 14px 32px;
+      background: rgba(11,8,6,.78); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+      border-bottom: 1px solid var(--border);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; text-decoration: none; }
     .mark {
-      width: 54px; height: 54px; border-radius: 18px;
-      background: var(--green); color: white;
+      width: 38px; height: 38px; border-radius: 12px; flex-shrink: 0;
       display: grid; place-items: center;
-      font-weight: 700; font-size: 1.4rem;
-    }
-    .kicker { margin: 0; letter-spacing: 0.08em; text-transform: uppercase; font-size: 0.78rem; color: var(--muted); }
-    h1 { margin: 0; font-size: 2.2rem; letter-spacing: -0.03em; }
-    h2 { margin: 0 0 8px; font-size: 1.25rem; }
-    p { line-height: 1.5; }
-    .drop, .panel {
-      background: var(--card);
-      border: 1px solid var(--line);
-      border-radius: 22px;
-      padding: 22px;
-      margin: 14px 0;
-      box-shadow: 0 10px 30px #2430280d;
-    }
-    .drop.over { outline: 3px solid var(--leaf); background: var(--sky); }
-    .pick {
+      background: linear-gradient(135deg, var(--mint) 0%, var(--mint-deep) 100%);
+      color: var(--bg); font-family: var(--serif); font-weight: 700; font-size: 1.3rem; font-style: italic;
+      box-shadow: 0 0 0 1px rgba(232,145,79,.3), 0 6px 22px rgba(232,145,79,.25);
       position: relative;
-      display: inline-block;
-      margin-top: 8px;
-      padding: 12px 18px;
-      border-radius: 999px;
-      background: var(--green);
-      color: white;
-      font-weight: 650;
-      cursor: pointer;
     }
-    .pick input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
-    .message { min-height: 1.4em; color: var(--green); }
-    .message.bad { color: #9a3412; }
-    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
-    .card { background: var(--sky); border-radius: 18px; padding: 16px; }
-    .card span { display: block; color: var(--muted); font-size: 0.9rem; }
-    .card strong { display: block; margin-top: 6px; font-size: 1.45rem; line-height: 1.2; }
-    .overview {
-      background: #fff;
-      border: 1px solid #ece7e2;
-      border-radius: 18px;
-      box-shadow: 0 8px 28px #2430280a;
-      padding: 22px 26px 18px;
-    }
-    .overview-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
-    .overview h2 { margin: 0; font-size: 1.35rem; letter-spacing: -0.02em; }
-    .overview .sub { margin: 4px 0 0; color: #8a847c; font-size: 0.95rem; }
-    .icon-button {
-      width: 36px; height: 36px; border-radius: 10px;
-      border: 0; background: transparent; color: #2a2a2a; cursor: pointer;
-    }
-    .icon-button:hover { background: #f4f1ec; }
-    .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 22px 0 8px; }
-    .metrics span { display: block; color: #8d887f; font-size: 0.92rem; }
-    .metrics strong { display: block; margin-top: 6px; font-size: 1.7rem; font-weight: 650; letter-spacing: -0.03em; }
-    .illustrative { margin: 10px 0 0; color: #b0aaa2; font-size: 0.92rem; }
-    .overview hr { border: 0; border-top: 1px solid #eeeae6; margin: 18px 0; }
-    .overview h3 { margin: 0 0 14px; font-size: 1.15rem; }
-    .kind-row { display: grid; grid-template-columns: 160px 1fr 36px; gap: 12px; align-items: center; margin: 12px 0; }
-    .kind-track { background: #f0eeeb; border-radius: 999px; height: 8px; overflow: hidden; }
-    .kind-fill { height: 8px; border-radius: 999px; }
-    .kind-fill.reg { background: #5eb8ad; }
-    .kind-fill.ask { background: #e2a15a; }
-    .effect-row { display: grid; grid-template-columns: 168px 1fr auto; gap: 12px; align-items: center; margin: 12px 0; }
-    .effect-track { display: flex; height: 8px; border-radius: 999px; overflow: hidden; background: #f0eeeb; }
-    .effect-yes { background: #5eb8ad; height: 8px; }
-    .effect-no { background: #d9d3cb; height: 8px; }
-    .effect-count { color: #8d887f; font-size: 0.9rem; white-space: nowrap; }
-    .review { display: flex; gap: 12px; align-items: flex-start; }
-    .bulb {
-      flex: 0 0 28px; width: 28px; height: 28px; border-radius: 50%;
-      border: 1.5px solid #d9d4ce; color: #8a847c;
-      display: grid; place-items: center;
-    }
-    .review strong { display: block; margin-bottom: 4px; }
-    .review p { margin: 0; color: #3a3a3a; }
-    .question { margin: 22px 0 0; color: var(--muted); font-size: 0.95rem; }
-    .notes { margin: 8px 0 0; padding-left: 18px; }
-    .notes li { margin: 6px 0; }
-    .reflection { margin: 14px 0 0; padding-top: 12px; border-top: 1px solid var(--line); }
-    .chart-grid { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 14px; }
-    .columns {
-      display: flex; align-items: flex-end; gap: 4px;
-      height: 190px; padding-bottom: 4px;
-    }
-    .col { flex: 1 1 0; min-width: 0; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; }
-    .col .bar {
-      width: 100%; max-width: 26px; border-radius: 10px 10px 4px 4px;
-      background: linear-gradient(#a9cb90, var(--green)); min-height: 4px;
-    }
-    .col span { margin-top: 6px; font-size: 0.68rem; line-height: 1.15; color: var(--muted); text-align: center; }
-    .row { display: grid; grid-template-columns: 148px 1fr 36px; gap: 8px; align-items: center; margin: 8px 0; }
-    .track { background: #efe6d6; border-radius: 999px; height: 14px; overflow: hidden; }
-    .fill { height: 14px; border-radius: 999px; background: var(--green); }
-    .fill.ask { background: var(--orange); }
-    .split { display: flex; height: 22px; border-radius: 999px; overflow: hidden; background: #efe6d6; }
-    .split span { display: block; height: 100%; }
-    .legend { display: flex; gap: 14px; color: var(--muted); font-size: 0.9rem; margin-top: 8px; }
-    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 6px; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
-    th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
-    th { color: var(--muted); font-weight: 600; }
-    .weeks { list-style: none; padding: 0; margin: 0; }
-    .weeks li { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
-    .drawing-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 14px; }
-    .drawing-card { background: var(--sky); border-radius: 16px; padding: 12px; }
-    .drawing-card img { display: block; width: 100%; aspect-ratio: 5 / 3; object-fit: contain; background: white; border-radius: 10px; }
-    .drawing-card p { margin: 8px 0 0; }
-    label.field-label { display: block; margin-top: 14px; font-weight: 650; }
+    .mark::after { content: ""; position: absolute; right: -3px; bottom: -3px; width: 11px; height: 11px;
+      border-radius: 50%; background: var(--amber); border: 2px solid var(--bg); }
+    .brand-text { display: flex; flex-direction: column; line-height: 1.1; }
+    .brand-text .kicker { margin: 0; font-size: .62rem; letter-spacing: .22em; text-transform: uppercase; color: var(--mint); font-weight: 600; }
+    .brand-text h1 { font-family: var(--serif); font-size: 1.25rem; font-weight: 600; letter-spacing: .01em; }
+    .nav-links { display: flex; gap: 22px; margin: 0 auto; }
+    .nav-links a { text-decoration: none; color: var(--muted); font-size: .8rem; font-weight: 500;
+      letter-spacing: .1em; text-transform: uppercase; transition: color .2s; }
+    .nav-links a:hover { color: var(--mint-lt); }
+    @media (max-width: 960px) { .nav-links { display: none; } nav.top .tools { margin-left: auto; } }
+
+    /* ── Buttons ── */
+    button { font: inherit; }
     button.quiet {
-      font: inherit; border: 1px solid var(--line); background: white; color: var(--ink);
-      border-radius: 999px; padding: 6px 12px; cursor: pointer;
+      border: 1px solid var(--border-lt); background: transparent; color: var(--text);
+      border-radius: 999px; padding: 7px 14px; cursor: pointer; font-size: .88rem;
+      transition: border-color .2s, color .2s, background .2s, box-shadow .2s;
     }
-    .empty { color: var(--muted); }
-    .gate {
-      position: fixed; inset: 0; z-index: 5; overflow: auto;
-      background: #f3ecdf; padding: 28px 20px 72px;
+    button.quiet:hover { border-color: var(--mint); color: var(--mint-lt); box-shadow: 0 0 16px rgba(232,145,79,.15); }
+    #lock-page { display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px;
+      text-transform: uppercase; letter-spacing: .1em; font-size: .75rem; font-weight: 600;
+      border-color: rgba(243,227,204,.45); color: var(--amber); }
+    #lock-page:hover { background: var(--amber); color: var(--bg); border-color: var(--amber); box-shadow: 0 0 22px rgba(243,227,204,.3); }
+    button.go, button.stop, .btn {
+      border: 0; border-radius: 999px; padding: 12px 22px; font-weight: 600; cursor: pointer;
+      font-size: .92rem; letter-spacing: .02em; text-decoration: none; display: inline-flex; align-items: center; gap: 8px;
+      transition: background .2s, box-shadow .2s, transform .2s, border-color .2s, color .2s;
     }
-    .gate .sheet { max-width: 720px; margin: 0 auto; }
-    .codes { display: grid; gap: 12px; margin: 14px 0; }
-    .codes label { font-weight: 650; }
-    .codes input, .cover-pin {
-      display: block; width: 100%; margin-top: 6px;
-      font: inherit; padding: 12px 14px; border-radius: 12px;
-      border: 1px solid var(--line); background: white;
+    button.go, .btn.solid { background: var(--mint); color: var(--bg); }
+    button.go:hover, .btn.solid:hover { background: var(--mint-lt); box-shadow: 0 6px 28px rgba(232,145,79,.3); transform: translateY(-1px); }
+    button.stop, .btn.line { background: transparent; color: var(--text); border: 1px solid var(--border-lt); margin-left: 8px; }
+    .btn.line { margin-left: 0; }
+    button.stop:hover, .btn.line:hover { border-color: var(--amber); color: var(--amber-lt); }
+
+    /* ── Layout ── */
+    main { position: relative; max-width: 1120px; margin: 0 auto; padding: 0 24px 96px; }
+    .block { padding-top: 88px; }
+    .label { display: flex; align-items: center; gap: 12px; margin-bottom: 12px;
+      font-size: .74rem; font-weight: 600; letter-spacing: .2em; text-transform: uppercase; color: var(--mint); }
+    .label .n { font-family: var(--serif); font-style: italic; font-size: 1.05rem; letter-spacing: 0;
+      background: linear-gradient(135deg, var(--mint) 0%, var(--amber) 100%);
+      -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+    .label::after { content: ""; flex: 0 0 48px; height: 1px; background: linear-gradient(90deg, var(--mint), transparent); }
+    .question {
+      font-family: var(--serif); font-weight: 600; font-size: clamp(1.7rem, 3.4vw, 2.5rem);
+      line-height: 1.15; letter-spacing: -.01em; margin: 0 0 28px; max-width: 760px; color: var(--text);
     }
-    button.go, button.stop {
-      font: inherit; border: 0; border-radius: 999px;
-      padding: 12px 18px; font-weight: 650; cursor: pointer;
+    .question em { font-style: italic; color: var(--mint); font-weight: 400; }
+
+    /* ── Hero ── */
+    .hero { padding: 150px 0 40px; display: grid; grid-template-columns: 1.15fr .85fr; gap: 48px; align-items: center; }
+    .hero .eyebrow { display: inline-flex; align-items: center; gap: 10px; padding: 6px 14px 6px 8px;
+      border: 1px solid var(--border-lt); border-radius: 999px; font-size: .78rem; color: var(--muted);
+      background: rgba(23,17,13,.6); margin-bottom: 24px; }
+    .hero .eyebrow .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--mint);
+      box-shadow: 0 0 0 0 rgba(232,145,79,.6); animation: ping 2s ease-out infinite; margin-left: 4px; }
+    @keyframes ping { 0% { box-shadow: 0 0 0 0 rgba(232,145,79,.55); } 100% { box-shadow: 0 0 0 10px rgba(232,145,79,0); } }
+    .hero h2 { font-family: var(--serif); font-size: clamp(2.6rem, 6vw, 4.4rem); font-weight: 600; line-height: 1.04; letter-spacing: -.02em; margin-bottom: 22px; }
+    .hero h2 em { font-style: italic; font-weight: 400; }
+    .hero h2 .g { color: var(--mint); }
+    .hero h2 .o { color: var(--amber); }
+    .hero .lead { color: var(--muted); font-size: 1.08rem; max-width: 520px; margin-bottom: 30px; }
+    .hero .actions { display: flex; gap: 12px; flex-wrap: wrap; }
+    .legend-pills { display: flex; flex-direction: column; gap: 12px; margin-top: 18px; }
+    .pill { display: flex; gap: 14px; align-items: flex-start; padding: 14px 16px; border-radius: 16px;
+      background: rgba(23,17,13,.75); border: 1px solid var(--border); }
+    .pill i { flex: 0 0 12px; height: 12px; border-radius: 50%; margin-top: 6px; }
+    .pill.g i { background: var(--mint); box-shadow: 0 0 12px var(--mint); }
+    .pill.o i { background: var(--amber); box-shadow: 0 0 12px var(--amber); }
+    .pill strong { display: block; font-weight: 600; font-size: .95rem; }
+    .pill span { color: var(--muted); font-size: .88rem; }
+    .bridge { width: 100%; height: auto; display: block; overflow: visible; }
+    .bridge .node { fill: var(--surface); stroke: var(--border-lt); }
+    .bridge text { font-family: var(--sans); font-size: 12px; fill: var(--muted); letter-spacing: .12em; text-transform: uppercase; }
+    .bridge .arc { fill: none; stroke: url(#arcGrad); stroke-width: 2; stroke-dasharray: 3 7; }
+    @media (max-width: 860px) { .hero { grid-template-columns: 1fr; padding-top: 120px; } }
+
+    /* ── Cards ── */
+    .drop, .panel {
+      position: relative; background: linear-gradient(180deg, var(--surface) 0%, var(--bg-2) 100%);
+      border: 1px solid var(--border); border-radius: 22px; padding: 26px; margin: 0 0 18px;
+      transition: border-color .25s, box-shadow .25s;
     }
-    button.go { background: var(--green); color: white; }
-    button.stop { background: white; color: var(--ink); border: 1px solid var(--line); margin-left: 8px; }
-    .privacy-list { margin: 8px 0 0; padding-left: 18px; }
-    .privacy-list li { margin: 6px 0; }
-    header .tools { margin-left: auto; }
-    #names-cover { display: none; }
+    .panel::before, .drop::before {
+      content: ""; position: absolute; top: 0; left: 24px; right: 24px; height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(232,145,79,.45), transparent); opacity: .5; transition: opacity .3s;
+    }
+    .panel:hover, .drop:hover { border-color: var(--border-lt); box-shadow: 0 10px 40px rgba(11,8,6,.25); }
+    .panel:hover::before, .drop:hover::before { opacity: 1; }
+    .panel > h2, .drop > h2, #student-view h2 {
+      font-family: var(--serif); font-weight: 600; font-size: 1.3rem; letter-spacing: -.005em; margin: 0 0 14px;
+    }
+    .drop p, .panel p { color: var(--muted); }
+    .drop strong { color: var(--text); font-weight: 600; }
+    .drop { border-style: dashed; border-color: var(--border-lt); }
+    .drop.over { border-color: var(--mint); background: var(--mint-dim); box-shadow: 0 0 0 4px rgba(232,145,79,.12); }
+    .drop .drop-icon { width: 48px; height: 48px; border-radius: 14px; display: grid; place-items: center;
+      background: var(--mint-dim); color: var(--mint); margin-bottom: 16px; border: 1px solid rgba(232,145,79,.25); }
+    .pick {
+      position: relative; display: inline-flex; align-items: center; gap: 8px; margin: 4px 0 6px;
+      padding: 11px 20px; border-radius: 999px; background: var(--mint); color: var(--bg);
+      font-weight: 600; font-size: .92rem; cursor: pointer; transition: background .2s, box-shadow .2s;
+    }
+    .pick:hover { background: var(--mint-lt); box-shadow: 0 6px 24px rgba(232,145,79,.28); }
+    .pick.alt { background: transparent; color: var(--amber); border: 1px solid rgba(243,227,204,.5); }
+    .pick.alt:hover { background: var(--amber-dim); box-shadow: none; }
+    .pick input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+    .message { min-height: 1.4em; color: var(--mint) !important; margin: 10px 0 0; font-size: .92rem; }
+    .message.bad { color: var(--coral) !important; }
+
+    /* ── Overview card (rendered by script) ── */
+    .top-grid { display: grid; grid-template-columns: 1.45fr 1fr; gap: 18px; align-items: start; }
+    .top-grid .drop { margin: 0; }
+    @media (max-width: 900px) { .top-grid { grid-template-columns: 1fr; } }
+    .overview { padding: 30px 30px 26px; margin: 0; }
+    .overview:empty { display: none; }
+    .overview-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+    .overview h2 { font-family: var(--serif); font-size: 1.6rem; font-weight: 600; letter-spacing: -.01em; }
+    .overview .sub { margin: 4px 0 0; color: var(--mint); font-size: .74rem; letter-spacing: .18em; text-transform: uppercase; font-weight: 600; }
+    .icon-button {
+      width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center;
+      border: 1px solid var(--border-lt); background: transparent; color: var(--muted); cursor: pointer; transition: all .2s;
+    }
+    .icon-button:hover { color: var(--mint); border-color: var(--mint); box-shadow: 0 0 18px rgba(232,145,79,.2); }
+    .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 24px 0 8px; }
+    .metrics > div { background: rgba(11,8,6,.55); border: 1px solid var(--border); border-radius: 16px; padding: 16px 18px; }
+    .metrics span { display: block; color: var(--muted); font-size: .78rem; letter-spacing: .1em; text-transform: uppercase; }
+    .metrics strong { display: block; margin-top: 4px; font-family: var(--serif); font-size: 2.4rem; font-weight: 600; line-height: 1.05; letter-spacing: -.02em; }
+    .metrics > div:nth-child(1) strong { color: var(--text); }
+    .metrics > div:nth-child(2) strong { color: var(--amber); }
+    .metrics > div:nth-child(3) strong { color: var(--mint); }
+    .illustrative { margin: 12px 0 0 !important; color: var(--dim) !important; font-size: .85rem; font-style: italic; }
+    .overview hr { border: 0; border-top: 1px solid var(--border); margin: 22px 0; }
+    .overview h3 { margin: 0 0 14px; font-size: .78rem; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+    .kind-row { display: grid; grid-template-columns: 150px 1fr 36px; gap: 14px; align-items: center; margin: 12px 0; font-size: .95rem; }
+    .kind-row > span:last-child { text-align: right; font-weight: 600; }
+    .kind-track, .effect-track { background: var(--track); border-radius: 999px; height: 10px; overflow: hidden; }
+    .kind-fill { height: 10px; border-radius: 999px; transition: width .8s cubic-bezier(.22,1,.36,1); }
+    .kind-fill.reg { background: linear-gradient(90deg, var(--mint-deep), var(--mint)); box-shadow: 0 0 12px rgba(232,145,79,.45); }
+    .kind-fill.ask { background: linear-gradient(90deg, #a85a26, var(--amber)); box-shadow: 0 0 12px rgba(243,227,204,.45); }
+    .review { display: flex; gap: 14px; align-items: flex-start; padding: 16px; border-radius: 16px;
+      background: var(--amber-dim); border: 1px solid rgba(243,227,204,.25); }
+    .bulb { flex: 0 0 34px; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
+      background: rgba(243,227,204,.18); color: var(--amber); }
+    .review strong { display: block; margin-bottom: 4px; color: var(--amber-lt); font-weight: 600; }
+    .review p { margin: 0; color: var(--text) !important; }
+
+    /* ── Charts (rendered by script) ── */
+    .chart-grid { display: grid; grid-template-columns: 1.2fr .8fr; gap: 18px; }
+    .chart-grid > .panel { margin-bottom: 18px; }
+    .columns { display: flex; align-items: flex-end; gap: 6px; height: 200px; padding: 10px 0 4px;
+      background-image: linear-gradient(to top, var(--border) 1px, transparent 1px); background-size: 100% 50px; }
+    .col { flex: 1 1 0; min-width: 0; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; }
+    .col .bar { width: 100%; max-width: 28px; border-radius: 8px 8px 3px 3px; min-height: 4px;
+      background: linear-gradient(180deg, var(--mint-lt) 0%, var(--mint-deep) 100%);
+      box-shadow: 0 0 14px rgba(232,145,79,.25); transition: filter .2s, transform .2s; transform-origin: bottom;
+      animation: grow .9s cubic-bezier(.22,1,.36,1) both; }
+    .col:hover .bar { filter: brightness(1.2); }
+    @keyframes grow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+    .col span { margin-top: 8px; font-size: .68rem; line-height: 1.15; color: var(--muted); text-align: center; }
+    .row { display: grid; grid-template-columns: 150px 1fr 36px; gap: 10px; align-items: center; margin: 10px 0; font-size: .92rem; }
+    .row > span:last-child { text-align: right; font-weight: 600; color: var(--muted); }
+    .track { background: var(--track); border-radius: 999px; height: 12px; overflow: hidden; }
+    .fill { height: 12px; border-radius: 999px; background: linear-gradient(90deg, var(--mint-deep), var(--mint)); }
+    .fill.ask { background: linear-gradient(90deg, #a85a26, var(--amber)); }
+    .effect-row { display: grid; grid-template-columns: 170px 1fr auto; gap: 14px; align-items: center; margin: 12px 0; font-size: .95rem; }
+    .effect-track { display: flex; }
+    .effect-yes { background: var(--mint); height: 10px; box-shadow: 0 0 10px rgba(232,145,79,.4); }
+    .effect-no { background: #4a3a2d; height: 10px; }
+    .effect-count { color: var(--muted); font-size: .85rem; white-space: nowrap; }
+    .split { display: flex; height: 22px; border-radius: 999px; overflow: hidden; background: var(--track); }
+    .split span { display: block; height: 100%; }
+    .legend { display: flex; gap: 14px; color: var(--muted); font-size: .9rem; margin-top: 8px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+    .week-note, .empty { color: var(--dim) !important; font-size: .88rem; }
+    .notes { margin: 8px 0 0; padding-left: 18px; }
+    .reflection { margin: 14px 0 0; padding-top: 12px; border-top: 1px solid var(--border); }
+
+    table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+    th, td { text-align: left; padding: 11px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { color: var(--mint); font-weight: 600; font-size: .72rem; letter-spacing: .14em; text-transform: uppercase; }
+    tbody tr { transition: background .2s; }
+    tbody tr:hover { background: rgba(232,145,79,.05); }
+    td:last-child { color: var(--amber-lt); }
+    .table-wrap, #recent, #student-detail { overflow-x: auto; }
+
+    .student-picks { display: flex; flex-wrap: wrap; gap: 8px; }
+    .student-picks button.on { background: var(--mint); color: var(--bg); border-color: var(--mint); box-shadow: 0 0 18px rgba(232,145,79,.3); }
+    #student-detail h3 { margin: 26px 0 10px; font-size: .78rem; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+
+    /* ── Fields ── */
+    label.field-label { display: block; margin-top: 16px; font-weight: 500; font-size: .85rem; color: var(--muted); letter-spacing: .04em; }
+    input, select { color-scheme: dark; }
+    #student-pick, #drawing-student, .codes input, .cover-pin,
+    #panel-settings input:not([type=checkbox]), #panel-settings select {
+      display: block; width: 100%; margin-top: 6px; font: inherit; color: var(--text);
+      padding: 11px 14px; border-radius: 12px; border: 1px solid var(--border-lt); background: var(--bg);
+      transition: border-color .2s, box-shadow .2s;
+    }
+    #student-pick, #drawing-student { max-width: 300px; }
+    input:focus, select:focus { outline: none; border-color: var(--mint) !important; box-shadow: 0 0 0 3px rgba(232,145,79,.18); }
+    input[type=checkbox] { accent-color: var(--mint); width: 16px; height: 16px; vertical-align: -3px; }
+
+    /* ── Student panel settings ── */
+    #panel-settings .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin-bottom: 8px; }
+    #panel-settings label { display: block; font-weight: 500; font-size: .85rem; color: var(--muted); }
+    #panel-settings .checks { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 14px; }
+    #panel-settings .checks label {
+      font-weight: 500; color: var(--text); padding: 7px 14px 7px 10px; border-radius: 999px;
+      border: 1px solid var(--border-lt); background: var(--bg); cursor: pointer; transition: border-color .2s, background .2s;
+    }
+    #panel-settings .checks label:hover { border-color: var(--mint); }
+    #panel-settings .checks label:has(input:checked) { border-color: var(--mint); background: var(--mint-dim); }
+    #panel-settings p.field-label { color: var(--mint); text-transform: uppercase; letter-spacing: .16em; font-size: .72rem; font-weight: 600; margin: 22px 0 6px; }
+    #panel-form { margin-top: 10px; padding-top: 22px; border-top: 1px solid var(--border); }
+    #panel-form[hidden] { display: none; }
+    #panel-ble { margin-left: 8px; }
+
+    /* ── Drawings & weeks ── */
+    .drawing-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-top: 16px; }
+    .drawing-card { background: var(--bg); border: 1px solid var(--border); border-radius: 16px; padding: 12px; transition: border-color .2s, transform .2s; }
+    .drawing-card:hover { border-color: var(--mint); transform: translateY(-2px); }
+    .drawing-card img { display: block; width: 100%; aspect-ratio: 5 / 3; object-fit: contain; background: #fff; border-radius: 10px; }
+    .drawing-card p { margin: 10px 0 0; font-size: .85rem; }
+    .weeks { list-style: none; padding: 0; margin: 0; }
+    .weeks li { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 12px 4px; border-top: 1px solid var(--border); }
+    .weeks li span { display: flex; align-items: center; gap: 10px; }
+    .weeks li span::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--mint); box-shadow: 0 0 8px var(--mint); flex-shrink: 0; }
+    #example-note { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .bottom-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
+    @media (max-width: 860px) { .bottom-grid { grid-template-columns: 1fr; } }
+
+    /* ── Privacy gate ── */
+    .gate { position: fixed; inset: 0; z-index: 10; overflow: auto; background: var(--bg); padding: 48px 24px 72px; }
+    .gate::before { content: ""; position: fixed; inset: 0; pointer-events: none;
+      background: radial-gradient(circle at 15% 10%, rgba(232,145,79,.14) 0%, transparent 45%),
+                  radial-gradient(circle at 90% 90%, rgba(243,227,204,.1) 0%, transparent 45%); }
+    .gate .sheet { position: relative; max-width: 1080px; margin: 0 auto; display: grid; grid-template-columns: 1.2fr .8fr; gap: 40px; align-items: start; }
+    .gate .gate-brand { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+    .gate .gate-brand span { font-family: var(--serif); font-size: 1.2rem; font-weight: 600; }
+    .gate .kicker { margin: 0 0 12px; font-size: .74rem; letter-spacing: .2em; text-transform: uppercase; color: var(--amber); font-weight: 600; }
+    .gate h1 { font-family: var(--serif); font-size: clamp(2.2rem, 4.5vw, 3.4rem); font-weight: 600; line-height: 1.06; letter-spacing: -.02em; margin-bottom: 20px; }
+    .gate h1 em { font-style: italic; font-weight: 400; color: var(--mint); }
+    .gate .gate-copy > p { color: var(--muted); }
+    .privacy-list { list-style: none; margin: 22px 0 0; padding: 0; display: grid; gap: 10px; }
+    .privacy-list li { position: relative; padding: 12px 14px 12px 44px; border-radius: 14px; background: rgba(23,17,13,.7);
+      border: 1px solid var(--border); color: var(--muted); font-size: .92rem; line-height: 1.55; }
+    .privacy-list li::before { content: ""; position: absolute; left: 16px; top: 17px; width: 14px; height: 14px; border-radius: 4px;
+      background: var(--mint-dim); border: 1.5px solid var(--mint); }
+    .privacy-list li::after { content: ""; position: absolute; left: 20px; top: 20px; width: 4px; height: 6px;
+      border: solid var(--mint); border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); }
+    .codes { position: sticky; top: 24px; display: grid; gap: 14px; margin: 0; padding: 28px;
+      border-radius: 24px; background: linear-gradient(180deg, var(--surface-2), var(--surface)); border: 1px solid var(--border-lt);
+      box-shadow: 0 30px 80px rgba(11,8,6,.4), 0 0 0 1px rgba(232,145,79,.05); }
+    .codes .lock-badge { width: 52px; height: 52px; border-radius: 16px; display: grid; place-items: center;
+      background: var(--mint-dim); color: var(--mint); border: 1px solid rgba(232,145,79,.3); }
+    .codes .form-title { font-family: var(--serif); font-size: 1.35rem; font-weight: 600; margin: 0; }
+    .codes label { font-weight: 500; font-size: .85rem; color: var(--muted); letter-spacing: .04em; }
+    .codes input { font-size: 1.5rem; letter-spacing: .6em; text-align: center; font-weight: 600; padding: 12px; }
+    #gate-help { color: var(--dim); font-size: .85rem; margin: 0; }
+    .codes .btns { display: flex; flex-wrap: wrap; gap: 8px; }
+    .codes .btns button.stop { margin-left: 0; }
+    .codes button.go { flex: 1; justify-content: center; }
+    @media (max-width: 860px) { .gate .sheet { grid-template-columns: 1fr; } .codes { position: static; } }
+
+    /* ── Names cover ── */
+    #names-cover { display: none; text-align: center; padding: 40px 26px; border-color: rgba(243,227,204,.35);
+      background: linear-gradient(180deg, rgba(243,227,204,.07), var(--bg-2)); }
+    #names-cover h2 { font-size: 1.6rem; }
+    #names-cover .cover-pin { max-width: 220px; margin: 6px auto 0; text-align: center; letter-spacing: .5em; font-size: 1.3rem; }
+    #names-cover label.field-label { text-align: center; }
+    #names-cover .eye { width: 56px; height: 56px; margin: 0 auto 16px; border-radius: 50%; display: grid; place-items: center;
+      background: var(--amber-dim); color: var(--amber); }
+    #cover-show { margin-top: 12px; }
     body.names-hidden #recent,
     body.names-hidden #students,
     body.names-hidden #student-view,
     body.names-hidden #panel-settings,
     body.names-hidden #drawing-panel { display: none; }
-    #panel-settings .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
-    #panel-settings label { display: block; font-weight: 650; }
-    #panel-settings input, #panel-settings select {
-      display: block; width: 100%; margin-top: 6px; font: inherit;
-      padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: white;
-    }
-    #panel-settings .checks { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 8px 0; }
-    #panel-settings .checks label { font-weight: 500; }
-    #panel-form[hidden] { display: none; }
-    .student-picks { display: flex; flex-wrap: wrap; gap: 8px; }
-    .student-picks button.on { background: var(--green); color: white; border-color: var(--green); }
-    #student-pick {
-      display: block; width: 100%; max-width: 280px; margin-top: 6px;
-      font: inherit; padding: 10px 12px; border-radius: 12px;
-      border: 1px solid var(--line); background: white;
-    }
-    #student-detail h3 { margin: 18px 0 8px; font-size: 1.05rem; }
-    .week-note { color: var(--muted); }
     body.names-hidden #names-cover { display: block; }
-    @media (max-width: 720px) {
-      .chart-grid, .metrics, .kind-row, .effect-row { grid-template-columns: 1fr; }
-      h1 { font-size: 1.8rem; }
+
+
+    /* ── Bridger the beaver ── */
+    .bridger-dock { position: fixed; right: 20px; bottom: 18px; z-index: 30; display: flex; align-items: flex-end; gap: 6px; pointer-events: none; }
+    .bridger-bubble {
+      pointer-events: auto; position: relative; max-width: 270px; margin: 0 0 54px;
+      background: #dedbde; color: #141218; border-radius: 16px; padding: 12px 34px 12px 16px;
+      font-size: .92rem; line-height: 1.45; font-weight: 500;
+      box-shadow: 0 0 0 2px var(--mint), 0 0 26px rgba(243,227,204,.45), 0 14px 34px rgba(11,8,6,.5);
+      opacity: 0; transform: translateY(10px) scale(.94); transform-origin: bottom right; visibility: hidden;
+      transition: opacity .3s, transform .35s cubic-bezier(.34,1.56,.64,1), visibility .3s;
     }
+    .bridger-bubble.show { opacity: 1; transform: none; visibility: visible; }
+    .bridger-bubble::after { content: ""; position: absolute; right: -9px; bottom: 16px; border: 9px solid transparent; border-left-color: #dedbde; border-right: 0; }
+    .bridger-bubble .who { display: block; font-size: .66rem; letter-spacing: .16em; text-transform: uppercase; color: #a85a26; font-weight: 700; margin-bottom: 2px; }
+    .bridger-close { position: absolute; top: 6px; right: 8px; width: 22px; height: 22px; border: 0; border-radius: 50%; background: transparent; color: #6b6474; cursor: pointer; font-size: 1rem; line-height: 1; }
+    .bridger-close:hover { background: rgba(11,8,6,.08); color: #141218; }
+    .bridger-btn { pointer-events: auto; border: 0; background: none; padding: 0; cursor: pointer; position: relative;
+      filter: drop-shadow(0 8px 16px rgba(11,8,6,.55)) drop-shadow(0 0 14px rgba(232,145,79,.18));
+      animation: bridger-bob 3.2s ease-in-out infinite; }
+    .bridger-btn:focus-visible { outline: 2px solid var(--mint); outline-offset: 6px; border-radius: 12px; }
+    .bridger-btn svg { display: block; width: 96px; height: auto; overflow: visible; }
+    .bridger-btn.hop { animation: bridger-hop .6s cubic-bezier(.34,1.56,.64,1); }
+    .bridger-btn.wiggle { animation: bridger-wiggle .5s ease-in-out 2; }
+    .bridger-btn.nap { animation: none; opacity: .55; }
+    .bridger-btn.nap .b-eye { transform: scaleY(.15); animation: none; }
+    .bridger-btn .zz { position: absolute; top: -14px; left: 4px; font-family: var(--serif); font-style: italic; color: var(--amber); font-size: 1rem; opacity: 0; }
+    .bridger-btn.nap .zz { opacity: 1; animation: zz 2.4s ease-in-out infinite; }
+    .b-eye { transform-box: fill-box; transform-origin: center; animation: blink 5.5s infinite; }
+    .b-tail { transform-box: view-box; transform-origin: 56px 35px; animation: wag 2.4s ease-in-out infinite; }
+    .b-ear { transform-box: fill-box; transform-origin: center bottom; }
+    .bridger-btn:hover .b-ear { animation: ear .4s ease-in-out 2; }
+    .bridger-btn.excited .b-tail { animation-duration: .35s; }
+    .bridge-beaver .b-tail { animation-duration: 1.6s; }
+    .bridge-hop { transform-box: fill-box; transform-origin: center bottom; animation: bridge-hop 3.2s linear infinite; }
+    .bridge text.bridge-call {
+      text-transform: none; letter-spacing: 0; font-size: 13px; font-style: italic;
+      font-family: var(--serif); fill: #e8914f; opacity: 0;
+      animation: bridge-call 3.2s linear infinite;
+    }
+    .bridger-shadow { position: absolute; left: 10px; right: 26px; bottom: -6px; height: 8px; border-radius: 50%; background: radial-gradient(rgba(243,227,204,.45), transparent 70%); }
+    @keyframes bridger-bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+    @keyframes bridger-hop { 0% { transform: translateY(0) scale(1,1); } 30% { transform: translateY(-26px) scale(.95,1.06); } 60% { transform: translateY(0) scale(1.08,.92); } 100% { transform: none; } }
+    @keyframes bridger-wiggle { 0%,100% { transform: rotate(0); } 25% { transform: rotate(-8deg); } 75% { transform: rotate(8deg); } }
+    @keyframes blink { 0%,92%,100% { transform: scaleY(1); } 95% { transform: scaleY(.1); } }
+    @keyframes wag { 0%,100% { transform: rotate(-6deg); } 50% { transform: rotate(10deg); } }
+    @keyframes ear { 50% { transform: scale(1.15); } }
+    @keyframes zz { 0% { transform: translate(0,0); opacity: 0; } 30% { opacity: 1; } 100% { transform: translate(-10px,-14px); opacity: 0; } }
+    @keyframes bridge-hop {
+      0% { transform: translateY(-16px); }
+      8% { transform: translateY(0); }
+      42% { transform: translateY(0); }
+      50% { transform: translateY(-16px); }
+      58% { transform: translateY(0); }
+      92% { transform: translateY(0); }
+      100% { transform: translateY(-16px); }
+    }
+    @keyframes bridge-call {
+      0% { opacity: 0; }
+      8% { opacity: 1; }
+      78% { opacity: 1; }
+      92%, 100% { opacity: 0; }
+    }
+    .bridger-mute { pointer-events: auto; position: absolute; right: -8px; bottom: -8px; width: 44px; height: 44px; border-radius: 50%;
+      border: 1px solid var(--border-lt); background: var(--surface); color: var(--muted); font-size: 1.2rem; cursor: pointer; display: grid; place-items: center; opacity: 0; transition: opacity .2s; }
+    .bridger-dock:hover .bridger-mute, .bridger-mute:focus-visible { opacity: 1; }
+    .bridger-wrap { position: relative; pointer-events: auto; }
+    @media (max-width: 720px) {
+      .bridger-dock { right: 10px; bottom: 10px; }
+      .bridger-btn svg { width: 66px; }
+      .bridger-mute { width: 40px; height: 40px; font-size: 1.05rem; }
+      .bridger-bubble { max-width: 210px; font-size: .85rem; margin-bottom: 40px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .bridger-btn, .b-eye, .b-tail, .bridger-btn.hop, .bridger-btn.wiggle, .bridge-hop, .bridge-call { animation: none !important; }
+    }
+
+    /* ── Footer ── */
+    footer { position: relative; z-index: 1; border-top: 1px solid var(--border); padding: 28px 24px; text-align: center;
+      color: var(--dim); font-size: .82rem; letter-spacing: .06em; }
+    footer b { font-family: var(--serif); font-style: italic; font-weight: 600; color: var(--muted); letter-spacing: 0; }
+
+    /* ── Reveal ── */
+    .reveal { opacity: 0; transform: translateY(24px); transition: opacity .8s cubic-bezier(.22,1,.36,1), transform .8s cubic-bezier(.22,1,.36,1); }
+    .reveal.in { opacity: 1; transform: none; }
+    @media (prefers-reduced-motion: reduce) {
+      .reveal { opacity: 1; transform: none; transition: none; }
+      .sky .orb, .col .bar, .hero .eyebrow .pulse { animation: none; }
+    }
+
+    @media (max-width: 720px) {
+      nav.top { padding: 12px 16px; }
+      main { padding: 0 16px 72px; }
+      .chart-grid, .metrics, .kind-row, .effect-row { grid-template-columns: 1fr; }
+      .row { grid-template-columns: 110px 1fr 28px; }
+      .panel, .drop, .overview { padding: 20px; }
+      .metrics strong { font-size: 2rem; }
+      .gate { padding: 28px 16px 56px; }
+    }
+
+    /* ── Black / white / red-orange scheme ── */
+    .kind-fill.reg, .fill { background: linear-gradient(90deg, #8a7560, #fbf3e8); box-shadow: 0 0 12px rgba(243,227,204,.25); }
+    .kind-fill.ask, .fill.ask { background: linear-gradient(90deg, #a85a26, #e8914f); box-shadow: 0 0 12px rgba(232,145,79,.5); }
+    .col .bar { background: linear-gradient(180deg, #fbf3e8 0%, #6e5a46 100%); box-shadow: 0 0 14px rgba(243,227,204,.1); }
+    .col:hover .bar { background: linear-gradient(180deg, #ffb57d 0%, #a85a26 100%); }
+    .effect-yes { background: #fbf3e8; box-shadow: 0 0 10px rgba(243,227,204,.3); }
+    .pill.g i { background: #fbf3e8; box-shadow: 0 0 12px rgba(243,227,204,.7); }
+    .pill.o i { background: var(--mint); box-shadow: 0 0 12px var(--mint); }
+    .metrics > div:nth-child(2) strong { color: var(--mint); }
+    .metrics > div:nth-child(3) strong { color: #fbf3e8; }
+    .review { background: rgba(232,145,79,.07); border-color: rgba(232,145,79,.3); }
+    .bulb { background: rgba(232,145,79,.15); color: var(--mint); }
+    .review strong { color: #fbf3e8; }
+    .hero h2 .o { color: #fbf3e8; }
+    .bridger-bubble { box-shadow: 0 0 0 2px var(--mint), 0 0 26px rgba(232,145,79,.35), 0 14px 34px rgba(11,8,6,.6); }
+    .bridger-bubble .who { color: var(--mint); }
+    .bridger-shadow { background: radial-gradient(rgba(232,145,79,.4), transparent 70%); }
+    #lock-page { border-color: rgba(232,145,79,.55); color: var(--mint); }
+    #lock-page:hover { background: var(--mint); color: #fbf3e8; border-color: var(--mint); box-shadow: 0 0 22px rgba(232,145,79,.4); }
+    button.go, .btn.solid, .pick:not(.alt) { color: #fbf3e8; }
+    .pick.alt { color: #fbf3e8; border-color: rgba(243,227,204,.35); }
+    .pick.alt:hover { background: rgba(243,227,204,.06); }
+
+    /* ── Beaver scheme: espresso, caramel, cream ── */
+    .sky .grid { background-image: repeating-radial-gradient(circle at 88% -6%, transparent 0 46px, rgba(232,145,79,.075) 46px 47px);
+      background-size: auto; mask-image: linear-gradient(to bottom, #000 0%, transparent 75%); -webkit-mask-image: linear-gradient(to bottom, #000 0%, transparent 75%); }
+    .sky .orb.a { background: radial-gradient(circle, rgba(196,122,69,.12) 0%, transparent 65%); }
+    button.go, .btn.solid, .pick:not(.alt), #lock-page:hover, .student-picks button.on { color: #1a0f08; }
+    .mark { color: #1a0f08; }
+    .panel::before, .drop::before { background: linear-gradient(90deg, transparent, rgba(232,145,79,.55), transparent); }
+    .hero h2 .o { color: #f3e3cc; }
+    .bridger-bubble { background: #f3e3cc; }
+    .bridger-bubble::after { border-left-color: #f3e3cc; }
+    .bridger-bubble .who { color: #a85a26; }
+
+    /* ── Teacher device status ── */
+    [hidden] { display: none !important; }
+    .device { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border-radius: 14px;
+      background: var(--bg); border: 1px solid var(--border-lt); transition: border-color .3s, background .3s; }
+    .device strong { display: block; font-size: .92rem; font-weight: 600; }
+    .device span:not(.device-dot) { display: block; color: var(--muted); font-size: .82rem; line-height: 1.45; margin-top: 2px; }
+    .device-dot { flex: 0 0 10px; height: 10px; border-radius: 50%; margin-top: 6px; background: var(--dim); }
+    .device[data-state="checking"] .device-dot { background: var(--muted); animation: ping 1.4s ease-out infinite; }
+    .device[data-state="connected"] { border-color: var(--mint); background: var(--mint-dim); }
+    .device[data-state="connected"] .device-dot { background: var(--mint); box-shadow: 0 0 10px var(--mint); }
+    .device[data-state="unsupported"] .device-dot { background: var(--coral); }
+    .codes .device-btn { margin-left: 0; justify-content: center; }
+    #device-reload:disabled { opacity: .45; cursor: not-allowed; transform: none; box-shadow: none; }
   </style>
 </head>
 <body>
-  <main>
-    <header>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <g id="bridger-art">
+        <g class="b-tail">
+          <rect x="54" y="26" width="28" height="18" rx="6" fill="#c47a45"/>
+          <path d="M58 30 L78 40 M66 30 L78 36 M58 40 L76 30 M66 40 L78 32" fill="none" stroke="#5c3317"/>
+        </g>
+        <g fill="#c47a45">
+          <circle class="b-ear" cx="14" cy="10" r="9"/>
+          <circle class="b-ear" cx="46" cy="10" r="9"/>
+          <rect x="0" y="12" width="60" height="46" rx="12"/>
+          <rect x="8" y="52" width="14" height="10" rx="4"/>
+          <rect x="36" y="52" width="14" height="10" rx="4"/>
+        </g>
+        <circle class="b-eye" cx="22" cy="32" r="3" fill="#111"/>
+        <circle class="b-eye" cx="38" cy="32" r="3" fill="#111"/>
+        <circle cx="12" cy="40" r="4" fill="#ffb3c7"/>
+        <circle cx="48" cy="40" r="4" fill="#ffb3c7"/>
+        <circle cx="30" cy="38" r="3" fill="#111"/>
+        <path d="M24 44 L30 47 L36 44" fill="none" stroke="#111"/>
+      </g>
+    </defs>
+  </svg>
+
+  <div class="bridger-dock" id="bridger-dock">
+    <p class="bridger-bubble" id="bridger-bubble" role="status" aria-live="polite">
+      <span class="who">Bridger</span><span id="bridger-text">Hi! I'm Bridger.</span>
+      <button type="button" class="bridger-close" id="bridger-close" aria-label="Close message">×</button>
+    </p>
+    <div class="bridger-wrap">
+      <button type="button" class="bridger-btn" id="bridger" aria-label="Bridger the beaver. Click for a tip.">
+        <span class="zz" aria-hidden="true">z z</span>
+        <svg width="86" height="64" viewBox="0 0 86 64" aria-label="Bridger">
+        <g class="b-tail">
+          <rect x="54" y="26" width="28" height="18" rx="6" fill="#c47a45"/>
+          <path d="M58 30 L78 40 M66 30 L78 36 M58 40 L76 30 M66 40 L78 32" fill="none" stroke="#5c3317"/>
+        </g>
+        <g fill="#c47a45">
+          <circle class="b-ear" cx="14" cy="10" r="9"/>
+          <circle class="b-ear" cx="46" cy="10" r="9"/>
+          <rect x="0" y="12" width="60" height="46" rx="12"/>
+          <rect x="8" y="52" width="14" height="10" rx="4"/>
+          <rect x="36" y="52" width="14" height="10" rx="4"/>
+        </g>
+        <circle class="b-eye" cx="22" cy="32" r="3" fill="#111"/>
+        <circle class="b-eye" cx="38" cy="32" r="3" fill="#111"/>
+        <circle cx="12" cy="40" r="4" fill="#ffb3c7"/>
+        <circle cx="48" cy="40" r="4" fill="#ffb3c7"/>
+        <circle cx="30" cy="38" r="3" fill="#111"/>
+        <path d="M24 44 L30 47 L36 44" fill="none" stroke="#111"/>
+      </svg>
+      </button>
+      <span class="bridger-shadow" aria-hidden="true"></span>
+      <button type="button" class="bridger-mute" id="bridger-mute" aria-label="Let Bridger nap" title="Let Bridger nap">z</button>
+    </div>
+  </div>
+
+  <div class="sky" aria-hidden="true"><div class="grid"></div><div class="orb m"></div><div class="orb a"></div></div>
+
+  <nav class="top">
+    <a class="brand" href="#top">
       <div class="mark" aria-hidden="true">C</div>
-      <div>
+      <div class="brand-text">
         <p class="kicker">Classroom check-in</p>
         <h1>CLEAR</h1>
       </div>
-      <div class="tools">
-        <button type="button" class="quiet" id="lock-page">Lock</button>
-      </div>
-    </header>
+    </a>
+    <div class="nav-links">
+      <a href="#overview">Overview</a>
+      <a href="#trends">Trends</a>
+      <a href="#strategies">Strategies</a>
+      <a href="#next">Students</a>
+      <a href="#panel-block">Panel</a>
+      <a href="#weeks-block">Weeks</a>
+    </div>
+    <div class="tools">
+      <button type="button" class="quiet" id="lock-page">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+        Lock
+      </button>
+    </div>
+  </nav>
 
+  <main id="top">
     <section class="gate" id="gate">
       <div class="sheet">
-        <p class="kicker">Privacy notice</p>
-        <h1>Before any student records</h1>
-        <p>CLEAR keeps a first name, a feeling, the choice a student tapped, the time, and the teacher’s yes or no. It does not ask for an address, phone number, photo, or student ID. The week stays in this browser. It is not sent to a company server.</p>
-        <p>These notes are school records. FERPA expects the school to keep them for the classroom and to let a parent look at a child’s records and ask for a correction or deletion. COPPA’s school rule fits this page: it is used for the class, not as a public site for children, and a parent can refuse by asking the teacher not to keep that child’s panel or this browser’s copy.</p>
-        <ul class="privacy-list">
-          <li>The teacher device asks for a class PIN, then a teacher code, before it shows messages or turns on the USB drive.</li>
-          <li>CLEAR.CSV from the updated teacher device is locked with the class PIN. The website asks for both codes before it opens a week.</li>
-          <li>A student panel must use that class PIN. The teacher then allows that panel. Other panels stay on a waiting list, and their messages are not saved.</li>
-          <li>Names and messages on this page hide after 10 seconds with no mouse or keyboard activity. The graphs that do not name a student stay up.</li>
-          <li>Student panel settings go from this browser straight to that panel over USB or Bluetooth. They are not sent to a server. The settings password is not saved here.</li>
-          <li>Removing a week, or choosing “Delete saved weeks,” takes the copy out of this browser. Deleting CLEAR.CSV on the teacher drive clears that device’s week.</li>
-        </ul>
+        <div class="gate-brand"><div class="mark" aria-hidden="true">C</div><span>CLEAR Bridge</span></div>
+        <div class="gate-copy">
+          <p class="kicker">Privacy notice</p>
+          <h1>Before any student <em>records</em></h1>
+          <p>CLEAR keeps a first name, a feeling, the choice a student tapped, the time, and the teacher’s yes or no. It does not ask for an address, phone number, photo, or student ID. The week stays on the teacher device. This page shows it only while it is open, and it is not sent to a company server.</p>
+          <p>These notes are school records. FERPA expects the school to keep them for the classroom and to let a parent look at a child’s records and ask for a correction or deletion. COPPA’s school rule fits this page: it is used for the class, not as a public site for children, and a parent can refuse by asking the teacher not to keep that child’s panel or this browser’s copy.</p>
+          <ul class="privacy-list">
+            <li>The teacher device asks for a class PIN, then a teacher code, before it shows messages or shares its week over USB.</li>
+            <li>CLEAR.CSV stays on the teacher device, locked with the class PIN. This page reads it over USB only after the connected device accepts the class PIN and teacher code.</li>
+            <li>After five wrong tries, the teacher device waits a minute before it takes codes again.</li>
+            <li>A student panel must use that class PIN. The teacher then allows that panel. Other panels stay on a waiting list, and their messages are not saved.</li>
+            <li>Names and messages on this page hide after 5 minutes with no mouse or keyboard activity. The graphs that do not name a student stay up.</li>
+            <li>Student panel settings go from this browser straight to that panel over USB or Bluetooth. They are not sent to a server. The settings password is not saved here.</li>
+            <li>This page does not save codes or weeks. Locking or closing the page clears them. Deleting CLEAR.CSV on the teacher device clears that device’s week.</li>
+          </ul>
+        </div>
         <form class="codes" id="gate-form">
+          <div class="lock-badge" aria-hidden="true">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+          </div>
+          <p class="form-title">Teacher sign-in</p>
+          <div class="device" id="device-box" data-state="checking" role="status" aria-live="polite">
+            <span class="device-dot" aria-hidden="true"></span>
+            <div><strong id="device-title">Looking for the teacher device…</strong><span id="device-text"></span></div>
+          </div>
+          <button type="button" class="stop device-btn" id="device-connect" hidden>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2v10"/><path d="M8 6l4-4 4 4"/><rect x="7" y="12" width="10" height="6" rx="1"/><path d="M10 18v4M14 18v4"/></svg>
+            Connect teacher device</button>
           <label>Class PIN
             <input id="gate-pin" inputmode="numeric" autocomplete="off" maxlength="4" pattern="[0-9]{4}" required>
           </label>
           <label>Teacher code
             <input id="gate-code" inputmode="numeric" autocomplete="off" maxlength="4" pattern="[0-9]{4}" required>
           </label>
-          <p id="gate-help">Use the same four-digit class PIN and teacher code you set on the teacher device. The first visit on this browser saves a check for those codes. It does not save the codes themselves.</p>
+          <p id="gate-help">Enter the class PIN and teacher code set on the connected teacher device. This page checks them with the device and does not save them.</p>
           <p id="gate-message" class="message"></p>
-          <div>
-            <button class="go" type="submit" id="gate-submit">Continue</button>
-            <button class="stop" type="button" id="gate-delete">Delete saved weeks</button>
+          <div class="btns">
+            <button class="go" type="submit" id="gate-submit">Open my class</button>
+            <button class="stop" type="button" id="gate-sample">View sample class</button>
           </div>
         </form>
       </div>
     </section>
 
-    <section class="panel overview" id="summary"></section>
-    <section class="drop" id="drop">
-      <h2>Add a week from the teacher device</h2>
-      <p>Sample weeks are already on this page, so the graphs can be shown before a device is plugged in. When you have a real week, choose <strong>CLEAR.CSV</strong>. A file from the updated teacher device is locked with the class PIN. It is added beside the samples, and it stays in this browser in locked form.</p>
-      <label class="pick">Choose CLEAR.CSV
-        <input id="file" type="file" accept=".csv,text/csv">
-      </label>
-      <label class="field-label" for="drawings">Student drawing files (optional)</label>
-      <label class="pick">Choose SVG drawings
-        <input id="drawings" type="file" accept=".svg,image/svg+xml" multiple>
-      </label>
-      <p>Copy CLEAR.CSV and any DRAWxxxx.SVG files from the teacher device. Choose drawings before importing the CSV to save them with that week.</p>
-      <p id="message" class="message"></p>
-    </section>
+    <!-- Hero -->
+    <header class="hero" id="hero">
+      <div class="reveal">
+        <span class="eyebrow"><span class="pulse"></span>GEEN 1400 · Teacher dashboard</span>
+        <h2>Every check-in, from <em class="g">how they feel</em> to <em class="o">what they need.</em></h2>
+        <p class="lead">A student picks how they feel on their panel and gets a list of responses. This page turns each week from the teacher device into something you can read at a glance.</p>
+        <div class="actions">
+          <a class="btn solid" href="#overview">See this week
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
+          <a class="btn line" href="#drop">Add a week</a>
+        </div>
+      </div>
+      <div class="reveal">
+        <svg class="bridge" viewBox="0 0 400 190" aria-hidden="true">
+          <defs>
+            <linearGradient id="arcGrad" x1="0" x2="1"><stop offset="0" stop-color="#e8914f"/><stop offset="1" stop-color="#f3e3cc"/></linearGradient>
+            <filter id="glow"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+          </defs>
+          <path id="arcPath" class="arc" d="M60 120 Q200 -10 340 120"/>
+          <circle r="5" fill="#e8914f" filter="url(#glow)">
+            <animateMotion dur="3.2s" repeatCount="indefinite" keyPoints="0;1" keyTimes="0;1" calcMode="linear"><mpath href="#arcPath"/></animateMotion>
+          </circle>
+          <circle r="4" fill="#f3e3cc" filter="url(#glow)">
+            <animateMotion dur="3.2s" begin="1.6s" repeatCount="indefinite" keyPoints="1;0" keyTimes="0;1" calcMode="linear"><mpath href="#arcPath"/></animateMotion>
+          </circle>
+          <g class="bridge-beaver" transform="translate(179 21)">
+            <g class="bridge-hop">
+              <text class="bridge-call" x="22" y="-4" text-anchor="middle">Hop!</text>
+              <use href="#bridger-art" transform="scale(.5)"/>
+            </g>
+          </g>
+          <rect class="node" x="20" y="105" width="80" height="54" rx="10"/>
+          <rect x="30" y="114" width="60" height="30" rx="4" fill="#0b0806"/>
+          <circle cx="44" cy="129" r="4" fill="#e8914f"/><circle cx="60" cy="129" r="4" fill="#f3e3cc"/><circle cx="76" cy="129" r="4" fill="#4a3a2d"/>
+          <rect class="node" x="310" y="100" width="60" height="64" rx="10"/>
+          <rect x="318" y="108" width="44" height="36" rx="4" fill="#0b0806"/>
+          <path d="M330 126l6 6 12-12" stroke="#e8914f" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+          <circle cx="340" cy="154" r="4" fill="#2c221a"/>
+          <text x="60" y="182" text-anchor="middle">Student</text>
+          <text x="340" y="182" text-anchor="middle">Teacher</text>
+        </svg>
+        <div class="legend-pills">
+          <div class="pill g"><i></i><div><strong>Self-regulation · green on the panel</strong><span>Things the student can do alone. The teacher is still told.</span></div></div>
+          <div class="pill o"><i></i><div><strong>Teacher request · orange on the panel</strong><span>Asks the teacher for something. The Yes or No shows on the panel.</span></div></div>
+        </div>
+      </div>
+    </header>
 
-    <p class="question">How often did students use it through the week?</p>
-    <section class="panel" id="days"></section>
-    <div class="chart-grid">
-      <section class="panel" id="hours"></section>
-      <section class="panel" id="kinds"></section>
-    </div>
-    <p class="question">Which strategies did students say helped?</p>
-    <section class="panel" id="effect"></section>
-    <p class="question">What should a teacher look at next?</p>
-    <div class="chart-grid">
-      <section class="panel" id="feelings"></section>
-      <section class="panel" id="students"></section>
-    </div>
-    <section class="panel" id="student-view">
-      <h2>One student</h2>
-      <label class="field-label" for="student-pick">Student</label>
-      <select id="student-pick"></select>
-      <div id="student-detail"></div>
-    </section>
-    <section class="panel" id="names-cover">
-      <h2>Names are hidden</h2>
-      <p>Ten seconds passed with no activity. Enter the class PIN to show names, messages, and drawings again.</p>
-      <label class="field-label" for="cover-pin">Class PIN</label>
-      <input class="cover-pin" id="cover-pin" inputmode="numeric" autocomplete="off" maxlength="4">
-      <p id="cover-message" class="message"></p>
-      <button type="button" class="go" id="cover-show">Show names</button>
-    </section>
-    <section class="panel" id="recent"></section>
-    <section class="panel" id="panel-settings">
-      <h2>Student panel</h2>
-      <p>Change the settings stored on one student panel. Connect with USB-C or Bluetooth. Use the settings password from that panel. It is not the class PIN. Open this page from a local address so the browser can reach USB and Bluetooth.</p>
-      <div class="grid">
-        <label>Settings password
-          <input id="panel-pass" inputmode="numeric" autocomplete="off" maxlength="4">
-        </label>
+    <!-- 01 Overview -->
+    <div class="block" id="overview">
+      <div class="label reveal"><span class="n">01</span> This week</div>
+      <div class="top-grid">
+        <section class="panel overview reveal" id="summary"></section>
+        <section class="drop reveal" id="drop">
+          <div class="drop-icon" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 16V4"/><path d="M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
+          </div>
+          <h2>Weeks from the teacher device</h2>
+          <p>Weeks load straight from the connected teacher device when you sign in. Reload after students send more check-ins. To add an older copy of <strong>CLEAR.CSV</strong>, choose it below. A locked file opens with the same class PIN. Nothing here is saved after the page is locked or closed.</p>
+          <p><button type="button" class="go" id="device-reload" disabled>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 4v5h-5"/></svg>
+            Reload from teacher device</button></p>
+          <label class="pick alt">Choose CLEAR.CSV
+            <input id="file" type="file" accept=".csv,text/csv">
+          </label>
+          <p id="message" class="message"></p>
+        </section>
       </div>
-      <p>
-        <button type="button" class="go" id="panel-usb">Connect USB</button>
-        <button type="button" class="stop" id="panel-ble">Connect Bluetooth</button>
-      </p>
-      <p id="panel-status" class="message"></p>
-      <div id="panel-form" hidden>
-        <div class="grid">
-          <label>Student name <input id="panel-name" maxlength="16"></label>
-          <label>Teacher name <input id="panel-teacher" maxlength="16"></label>
-          <label>Brightness
-            <input id="panel-bright" type="number" min="20" max="100" step="10">
-          </label>
-          <label>Age group
-            <select id="panel-grade">
-              <option value="0">K</option>
-              <option value="1">1 - 2</option>
-              <option value="2">3 - 4</option>
-              <option value="3">5</option>
-            </select>
-          </label>
-        </div>
-        <div class="checks">
-          <label><input type="checkbox" id="panel-dark"> Dark</label>
-          <label><input type="checkbox" id="panel-bridger"> Bridger</label>
-          <label><input type="checkbox" id="panel-express"> Draw or write</label>
-          <label><input type="checkbox" id="panel-calm"> Calm screen</label>
-        </div>
-        <p class="field-label">Tools</p>
-        <div class="checks" id="panel-tools"></div>
-        <p class="field-label">Accommodations</p>
-        <div class="checks" id="panel-acc"></div>
-        <p class="field-label">Strategy order</p>
-        <div class="grid" id="panel-order"></div>
-        <div class="grid">
-          <label>First <input id="panel-first" maxlength="16"></label>
-          <label>Then <input id="panel-then" maxlength="16"></label>
-          <label>Schedule 1 <input id="panel-sch0" maxlength="16"></label>
-          <label>Schedule 2 <input id="panel-sch1" maxlength="16"></label>
-          <label>Schedule 3 <input id="panel-sch2" maxlength="16"></label>
-          <label>Schedule 4 <input id="panel-sch3" maxlength="16"></label>
-          <label>New settings password
-            <input id="panel-newpass" inputmode="numeric" autocomplete="off" maxlength="4">
-          </label>
-        </div>
-        <p><button type="button" class="go" id="panel-send">Send to panel</button></p>
+    </div>
+
+    <!-- 02 Trends -->
+    <div class="block" id="trends">
+      <div class="label reveal"><span class="n">02</span> Through the week</div>
+      <p class="question reveal">How often did students use it through the week?</p>
+      <section class="panel reveal" id="days"></section>
+      <div class="chart-grid">
+        <section class="panel reveal" id="hours"></section>
+        <section class="panel reveal" id="kinds"></section>
       </div>
-    </section>
-    <section class="panel" id="drawing-panel">
-      <h2>Student drawings</h2>
-      <p class="empty">Imported drawings stay with their week in this browser.</p>
-      <label class="field-label" for="drawing-student">Student</label>
-      <select id="drawing-student"></select>
-      <div id="drawing-gallery"></div>
-    </section>
-    <section class="panel">
-      <h2>Weeks on this page</h2>
-      <p id="example-note" class="empty"></p>
-      <ul class="weeks" id="weeks"></ul>
-    </section>
+    </div>
+
+    <!-- 03 Strategies -->
+    <div class="block" id="strategies">
+      <div class="label reveal"><span class="n">03</span> Strategies</div>
+      <p class="question reveal">Which strategies did students say helped?</p>
+      <section class="panel reveal" id="effect"></section>
+    </div>
+
+    <!-- 04 Next -->
+    <div class="block" id="next">
+      <div class="label reveal"><span class="n">04</span> Students</div>
+      <p class="question reveal">What should a teacher look at next?</p>
+      <div class="chart-grid">
+        <section class="panel reveal" id="feelings"></section>
+        <section class="panel reveal" id="students"></section>
+      </div>
+      <section class="panel reveal" id="student-view">
+        <h2>One student</h2>
+        <label class="field-label" for="student-pick">Student</label>
+        <select id="student-pick"></select>
+        <div id="student-detail"></div>
+      </section>
+      <section class="panel" id="names-cover">
+        <div class="eye" aria-hidden="true">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3l18 18"/><path d="M10.6 6.1A9.8 9.8 0 0 1 12 6c5 0 9 6 9 6a17 17 0 0 1-2.6 3.2M6.5 7.6C4.3 9.2 3 12 3 12s4 6 9 6a8.6 8.6 0 0 0 4-1"/></svg>
+        </div>
+        <h2>Names are hidden</h2>
+        <p>Five minutes passed with no activity. Enter the class PIN to show names and messages again.</p>
+        <label class="field-label" for="cover-pin">Class PIN</label>
+        <input class="cover-pin" id="cover-pin" inputmode="numeric" autocomplete="off" maxlength="4">
+        <p id="cover-message" class="message"></p>
+        <button type="button" class="go" id="cover-show">Show names</button>
+      </section>
+      <section class="panel reveal" id="recent"></section>
+    </div>
+
+    <!-- 05 Panel -->
+    <div class="block" id="panel-block">
+      <div class="label reveal"><span class="n">05</span> Student panel</div>
+      <section class="panel reveal" id="panel-settings">
+        <h2>Student panel</h2>
+        <p>Change the settings stored on one student panel. Connect with USB-C or Bluetooth. Use the settings password from that panel. It is not the class PIN. Open this page from a local address so the browser can reach USB and Bluetooth.</p>
+        <div class="grid">
+          <label>Settings password
+            <input id="panel-pass" inputmode="numeric" autocomplete="off" maxlength="4">
+          </label>
+        </div>
+        <p>
+          <button type="button" class="go" id="panel-usb">Connect USB</button>
+          <button type="button" class="stop" id="panel-ble">Connect Bluetooth</button>
+        </p>
+        <p id="panel-status" class="message"></p>
+        <div id="panel-form" hidden>
+          <div class="grid">
+            <label>Student name <input id="panel-name" maxlength="16"></label>
+            <label>Teacher name <input id="panel-teacher" maxlength="16"></label>
+            <label>Brightness
+              <input id="panel-bright" type="number" min="20" max="100" step="10">
+            </label>
+            <label>Age group
+              <select id="panel-grade">
+                <option value="0">K</option>
+                <option value="1">1 - 2</option>
+                <option value="2">3 - 4</option>
+                <option value="3">5</option>
+              </select>
+            </label>
+          </div>
+          <div class="checks">
+            <label><input type="checkbox" id="panel-dark"> Dark</label>
+            <label><input type="checkbox" id="panel-bridger"> Bridger</label>
+            <label><input type="checkbox" id="panel-express"> Draw or write</label>
+            <label><input type="checkbox" id="panel-calm"> Calm screen</label>
+          </div>
+          <p class="field-label">Tools</p>
+          <div class="checks" id="panel-tools"></div>
+          <p class="field-label">Accommodations</p>
+          <div class="checks" id="panel-acc"></div>
+          <p class="field-label">Strategy order</p>
+          <div class="grid" id="panel-order"></div>
+          <div class="grid">
+            <label>First <input id="panel-first" maxlength="16"></label>
+            <label>Then <input id="panel-then" maxlength="16"></label>
+            <label>Schedule 1 <input id="panel-sch0" maxlength="16"></label>
+            <label>Schedule 2 <input id="panel-sch1" maxlength="16"></label>
+            <label>Schedule 3 <input id="panel-sch2" maxlength="16"></label>
+            <label>Schedule 4 <input id="panel-sch3" maxlength="16"></label>
+            <label>New settings password
+              <input id="panel-newpass" inputmode="numeric" autocomplete="off" maxlength="4">
+            </label>
+          </div>
+          <p><button type="button" class="go" id="panel-send">Send to panel</button></p>
+        </div>
+      </section>
+    </div>
+
+    <!-- 06 Weeks -->
+    <div class="block" id="weeks-block">
+      <div class="label reveal"><span class="n">06</span> Weeks</div>
+      <section class="panel reveal">
+        <h2>Weeks on this page</h2>
+        <p id="example-note" class="empty"></p>
+        <ul class="weeks" id="weeks"></ul>
+      </section>
+    </div>
   </main>
+
+  <footer><b>CLEAR Bridge</b> &nbsp;·&nbsp; GEEN 1400 First-Year Engineering Projects &nbsp;·&nbsp; CU Boulder</footer>
+
+
   <script>
-    var STORAGE_KEY = "clear-weeks";
+    // Bridger: one helpful note per section, up for 10 seconds. Then a
+    // 3 second pause, then a fun fact for 5 seconds. The next fact waits
+    // a minute. Clicking him still flips to the next fact right away.
+    (function () {
+      var bubble = document.getElementById("bridger-bubble");
+      var text = document.getElementById("bridger-text");
+      var beaver = document.getElementById("bridger");
+      var mute = document.getElementById("bridger-mute");
+      var gate = document.getElementById("gate");
+      var hideTimer = 0, phaseTimer = 0, napping = false, pokeIndex = 0, wakeIndex = 0;
+      var WAKES = [
+        "Back on duty!",
+        "*yawn* I'm up. What did I miss?",
+        "Eyes open. The dam is fine.",
+        "Okay, I'm awake. Where were we?"
+      ];
+      var currentSection = "gate";
+      var helpIndex = {};
+      var helpLine = "";
+      var helpUntil = 0;
+      try { napping = localStorage.getItem("bridger-nap") === "1"; } catch (e) {}
+
+      var POKES = [
+        "Hey! That tickles.",
+        "Fun fact: a beaver's teeth never stop growing. Chewing wood keeps them short.",
+        "Their front teeth are orange because of iron. That makes the cutting edge strong.",
+        "A beaver slaps its flat tail on the water to warn the family.",
+        "Beavers close their ears and nose when they dive.",
+        "A beaver can stay underwater for about 15 minutes.",
+        "The lodge door is underwater, so foxes and coyotes stay outside.",
+        "Beavers pile branches under the ice so they can eat in winter.",
+        "A beaver dam slows a stream and makes a pond for fish, frogs, and ducks.",
+        "Those ponds hold water through a dry spell and let it out slowly.",
+        "Mud settles in a beaver pond, so the water downstream can run clearer.",
+        "Willows, moose, and woodpeckers use the wetlands beavers build.",
+        "A beaver family is called a colony, and they often share one lodge.",
+        "Their fur is packed so tight that water has a hard time getting through.",
+        "Beavers are rodents. A grown one can weigh about as much as a second-grader.",
+        "*happy tail slap*",
+        "Wood you like another fact? Click me again.",
+        "Pause a moment and I'll tell you about the part of the page you're on.",
+        "I carry messages across the bridge, from student to teacher.",
+        "Beep boop. Wait, no. I'm a beaver.",
+        "Gnaw-some job today."
+      ];
+      var HELP = {
+        gate: [
+          "Psst. Plug in the teacher device, then type the class PIN and teacher code.",
+          "Connect teacher device is the button above the boxes. Chrome or Edge can use the USB cable.",
+          "Use the codes saved on the teacher device. This page checks them and does not keep them.",
+          "No device yet? View sample class shows an example week.",
+          "Five wrong tries makes the teacher device wait a minute.",
+          "The list on the left is the short version of what this page stores."
+        ],
+        hero: [
+          "See this week jumps down to the overview.",
+          "Green on the panel is something a student can do alone. You still get told.",
+          "Orange on the panel asks you for something. Your Yes or No shows on their screen.",
+          "Add a week is for an older CLEAR.CSV you already copied."
+        ],
+        overview: [
+          "This is the week at a glance. Cream is self-regulation. Caramel is a teacher request.",
+          "The download button saves a short summary for a meeting. It does not name a student.",
+          "Reload from teacher device picks up new check-ins.",
+          "Choose CLEAR.CSV when you are opening an older copy by hand."
+        ],
+        trends: [
+          "Tall bars are busy days. A tall bar is not a grade.",
+          "The time of day chart shows which hours students reached for the panel.",
+          "The split beside it is self-regulation versus asking the teacher.",
+          "More use can mean students are asking for help more clearly."
+        ],
+        strategies: [
+          "Cream means a student said that strategy helped. Gray means not yet.",
+          "A higher Yes count is not a grade. It is only what students told the panel.",
+          "These are the choices on the student panel, grouped by what happened after."
+        ],
+        next: [
+          "Pick a student to see their strategies, requests, and how long a reply took.",
+          "Click a name, or use the Student menu, for one student at a time.",
+          "More requests can mean that student is asking more clearly.",
+          "Reply time is how long the Yes or No took. It is not a score.",
+          "Hit Lock before you walk away. I'll keep the names covered."
+        ],
+        names: [
+          "Names are hidden. Type the class PIN and press Show names.",
+          "Graphs that do not name a student can stay up. The names need the PIN.",
+          "This is the same class PIN as the teacher device."
+        ],
+        "panel-block": [
+          "This section talks to one student panel. The settings password is not the class PIN.",
+          "Connect USB or Bluetooth, then enter the four-digit password from that panel.",
+          "Send to panel writes the name, the tools, and the brightness onto that device.",
+          "Draw or write, Calm screen, and the tool switches match Student settings on the teacher device.",
+          "Stay on localhost so the browser is allowed to use USB and Bluetooth."
+        ],
+        "weeks-block": [
+          "Weeks on this page leave when you lock or close the tab.",
+          "A week marked Example is a sample class, not your students.",
+          "Drawings stay on the student panel. This page does not collect them."
+        ]
+      };
+      var PLACES = ["hero", "overview", "trends", "strategies", "next", "panel-block", "weeks-block"];
+
+      function nextHelp() {
+        var list = HELP[currentSection] || HELP.hero;
+        var i = helpIndex[currentSection] || 0;
+        helpIndex[currentSection] = (i + 1) % list.length;
+        return list[i];
+      }
+      function sectionNow() {
+        if (!gate.hidden) return "gate";
+        var cover = document.getElementById("names-cover");
+        if (cover && document.body.classList.contains("names-hidden")) {
+          var box = cover.getBoundingClientRect();
+          if (box.top < window.innerHeight * 0.7 && box.bottom > 80) return "names";
+        }
+        var viewTop = 90;
+        var viewBottom = window.innerHeight - 24;
+        var headingLine = window.innerHeight * 0.72;
+        var best = "hero";
+        var bestScore = -1;
+        for (var n = 0; n < PLACES.length; n++) {
+          var el = document.getElementById(PLACES[n]);
+          if (!el) continue;
+          var rect = el.getBoundingClientRect();
+          var visible = Math.min(rect.bottom, viewBottom) - Math.max(rect.top, viewTop);
+          if (visible <= 0) continue;
+          var score = visible;
+          if (rect.top >= viewTop - 30 && rect.top < headingLine) score += 900;
+          if (score > bestScore) { best = PLACES[n]; bestScore = score; }
+        }
+        return best;
+      }
+      function animate(name) {
+        beaver.classList.remove("hop", "wiggle");
+        void beaver.offsetWidth;
+        beaver.classList.add(name);
+      }
+      function clearPhase() {
+        clearTimeout(phaseTimer);
+        clearTimeout(hideTimer);
+      }
+      function hideBubble() {
+        bubble.classList.remove("show");
+        beaver.classList.remove("excited");
+      }
+      function showBubble(line, move) {
+        text.textContent = line;
+        bubble.classList.add("show");
+        beaver.classList.add("excited");
+        animate(move || "hop");
+      }
+      function showFact() {
+        if (napping) return;
+        if (document.hidden) { phaseTimer = setTimeout(showFact, 1000); return; }
+        showBubble(POKES[pokeIndex]);
+        pokeIndex = (pokeIndex + 1) % POKES.length;
+        phaseTimer = setTimeout(function () {
+          hideBubble();
+          phaseTimer = setTimeout(showFact, 60000);
+        }, 5000);
+      }
+      function endHelp() {
+        helpUntil = 0;
+        hideBubble();
+        phaseTimer = setTimeout(showFact, 3000);
+      }
+      function resumeAfter() {
+        var left = helpUntil - Date.now();
+        if (left > 800 && helpLine) {
+          showBubble(helpLine, "wiggle");
+          phaseTimer = setTimeout(endHelp, left);
+          return;
+        }
+        hideBubble();
+        phaseTimer = setTimeout(showFact, 3000);
+      }
+      function react(line, opts) {
+        opts = opts || {};
+        if (!line || (napping && !opts.force)) return;
+        clearPhase();
+        showBubble(line, opts.move);
+        phaseTimer = setTimeout(resumeAfter, opts.stay || 5000);
+      }
+      function startHelp(section) {
+        if (napping) return;
+        currentSection = section;
+        clearPhase();
+        helpLine = nextHelp();
+        helpUntil = Date.now() + 10000;
+        showBubble(helpLine, "wiggle");
+        phaseTimer = setTimeout(endHelp, 10000);
+      }
+      function showPoke() {
+        helpUntil = 0;
+        helpLine = "";
+        clearPhase();
+        showBubble(POKES[pokeIndex]);
+        pokeIndex = (pokeIndex + 1) % POKES.length;
+        phaseTimer = setTimeout(function () {
+          hideBubble();
+          phaseTimer = setTimeout(showFact, 60000);
+        }, 5000);
+      }
+      function setNap(on) {
+        napping = on;
+        beaver.classList.toggle("nap", on);
+        mute.textContent = on ? "!" : "z";
+        mute.title = on ? "Wake Bridger" : "Let Bridger nap";
+        mute.setAttribute("aria-label", mute.title);
+        try { localStorage.setItem("bridger-nap", on ? "1" : "0"); } catch (e) {}
+        if (on) {
+          hideBubble();
+          clearPhase();
+          helpUntil = 0;
+        } else {
+          startHelp(sectionNow());
+        }
+      }
+
+      function wakeUp() {
+        var line = WAKES[wakeIndex];
+        wakeIndex = (wakeIndex + 1) % WAKES.length;
+        setNap(false);
+        react(line, { stay: 3200, move: "wiggle" });
+      }
+
+      beaver.addEventListener("click", function () {
+        if (napping) { wakeUp(); return; }
+        showPoke();
+      });
+      mute.addEventListener("click", function () {
+        if (napping) { wakeUp(); return; }
+        react("Okay, nap time. Click me if you need me.", { force: true, stay: 2200 });
+        setTimeout(function () { setNap(true); }, 2200);
+      });
+      document.getElementById("bridger-close").addEventListener("click", function () {
+        helpUntil = 0;
+        helpLine = "";
+        hideBubble();
+        clearPhase();
+        phaseTimer = setTimeout(showFact, 60000);
+      });
+
+      // Reactions to the page
+      function greeting() {
+        var h = new Date().getHours();
+        return h < 12 ? "Good morning!" : h < 17 ? "Good afternoon!" : "Good evening!";
+      }
+      new MutationObserver(function () {
+        if (gate.hidden) react(greeting() + " You're in. Let's see how the class did this week.");
+        else react("Locked up tight. See you soon!", { move: "wiggle" });
+      }).observe(gate, { attributes: true, attributeFilter: ["hidden"] });
+
+      new MutationObserver(function () {
+        if (document.body.classList.contains("names-hidden")) react("Shh… I hid the names. The class PIN brings them back.", { move: "wiggle" });
+      }).observe(document.body, { attributes: true, attributeFilter: ["class"] });
+
+      ["message", "gate-message", "panel-status", "cover-message"].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        new MutationObserver(function () {
+          if (!el.textContent) return;
+          if (el.classList.contains("bad")) react("Uh oh. " + el.textContent, { move: "wiggle", stay: 6500 });
+          else if ((id === "message" || id === "panel-status") && !/…$/.test(el.textContent)) react("Nice! " + el.textContent);
+        }).observe(el, { childList: true, characterData: true, subtree: true });
+      });
+
+      document.addEventListener("click", function (event) {
+        var t = event.target.closest ? event.target : null;
+        if (!t) return;
+        if (t.closest("#overview-download")) react("Overview saved! Great for sharing at a meeting.");
+        else if (t.closest("[data-student]")) react("Opening their week. More requests can mean clearer asking.");
+      });
+
+      document.addEventListener("clear:device", function (event) {
+        if (event.detail === "connected") {
+          react(gate.hidden ? "Teacher device connected. Hit Reload to grab the newest check-ins."
+                          : "I hear the teacher device! Now type the class PIN and teacher code.");
+        } else {
+          react("The teacher device was unplugged. Plug it back in to reload.", { move: "wiggle" });
+        }
+      });
+
+      var drop = document.getElementById("drop");
+      var dragSaid = false;
+      drop.addEventListener("dragenter", function () {
+        if (!dragSaid) { dragSaid = true; react("Ooh, a file! Drop it right here."); }
+      });
+      drop.addEventListener("dragleave", function () { dragSaid = false; });
+
+      setInterval(function () {
+        if (napping || document.hidden) return;
+        var next = sectionNow();
+        if (next === currentSection) return;
+        startHelp(next);
+      }, 400);
+
+      if (napping) setNap(true);
+      else startHelp(sectionNow());
+
+      var hopLines = ["Hop!", "Missed me.", "Coming through.", "Boing.", "For the teacher.", "Clear!"];
+      var hopLabel = document.querySelector(".bridge-call");
+      var hopN = 0;
+      if (hopLabel) {
+        hopLabel.addEventListener("animationiteration", function () {
+          hopN = (hopN + 1) % hopLines.length;
+          hopLabel.textContent = hopLines[hopN];
+        });
+      }
+    })();
+  </script>
+  <script>
+    // Scroll reveal (visual only)
+    (function () {
+      var items = document.querySelectorAll(".reveal");
+      if (!("IntersectionObserver" in window)) {
+        items.forEach(function (el) { el.classList.add("in"); });
+        return;
+      }
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting) { entry.target.classList.add("in"); io.unobserve(entry.target); }
+        });
+      }, { threshold: 0.08 });
+      items.forEach(function (el) { io.observe(el); });
+    })();
+  </script>
+  <script>
     var HIDE_KEY = "clear-hidden-examples";
-    var SECRET_KEY = "clear-secrets";
     var KDF_ROUNDS = 4096;
+    // The class PIN and teacher code live only in memory while the page is open.
     var sessionPin = "";
+    var sessionCode = "";
+    var sampleMode = false;
+    // Earlier versions saved a code check and locked weeks in this browser. Clear them.
+    try { localStorage.removeItem("clear-secrets"); localStorage.removeItem("clear-weeks"); } catch (err) {}
     var memoryWeeks = [];
     var namesHidden = false;
     var idleTimer = 0;
     var textEncoder = new TextEncoder();
     var textDecoder = new TextDecoder();
-
-    function bytesToB64(bytes) {
-      var bin = "";
-      var view = new Uint8Array(bytes);
-      for (var i = 0; i < view.length; i++) bin += String.fromCharCode(view[i]);
-      return btoa(bin);
-    }
 
     function b64ToBytes(text) {
       var bin = atob(String(text).trim());
@@ -385,26 +1193,8 @@
         base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
     }
 
-    async function pinCheck(pin, salt) {
-      var base = await crypto.subtle.importKey(
-        "raw", textEncoder.encode(pin), "PBKDF2", false, ["deriveBits"]);
-      var bits = await crypto.subtle.deriveBits(
-        { name: "PBKDF2", salt: salt, iterations: KDF_ROUNDS, hash: "SHA-256" },
-        base, 256);
-      return bytesToB64(bits);
-    }
-
-    async function sealText(pin, plain) {
-      var salt = crypto.getRandomValues(new Uint8Array(16));
-      var iv = crypto.getRandomValues(new Uint8Array(12));
-      var key = await deriveAes(pin, salt);
-      var cipher = new Uint8Array(await crypto.subtle.encrypt(
-        { name: "AES-GCM", iv: iv }, key, textEncoder.encode(plain)));
-      return "CLEARENC1\n" + bytesToB64(salt) + "\n" + bytesToB64(iv) + "\n" + bytesToB64(cipher) + "\n";
-    }
-
     async function openSeal(pin, sealed) {
-      var lines = String(sealed).replace(/^\uFEFF/, "").split(/\r?\n/).map(function (line) {
+      var lines = String(sealed).replace(/^﻿/, "").split(/\r?\n/).map(function (line) {
         return line.trim();
       }).filter(function (line) { return line.length > 0; });
       if (lines[0] !== "CLEARENC1" || lines.length < 4) {
@@ -416,15 +1206,6 @@
       return textDecoder.decode(plain);
     }
 
-    function readSecrets() {
-      try {
-        var saved = JSON.parse(localStorage.getItem(SECRET_KEY) || "null");
-        if (!saved || !saved.salt || !saved.pin || !saved.code) return null;
-        return saved;
-      } catch (err) {
-        return null;
-      }
-    }
     var pendingDrawings = [];
     var drawingReadPromise = Promise.resolve();
     var drawingsReady = true;
@@ -503,58 +1284,6 @@
       ]
     ];
 
-    function readStoredWeeks() {
-      try {
-        var saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-        return Array.isArray(saved) ? saved : [];
-      } catch (err) {
-        return [];
-      }
-    }
-
-    async function storeWeeks(weeks) {
-      var kept = [];
-      for (var i = 0; i < weeks.length; i++) {
-        var week = weeks[i];
-        if (week.example) continue;
-        kept.push({
-          id: week.id,
-          name: week.name,
-          savedAt: week.savedAt,
-          sealed: await sealText(sessionPin, JSON.stringify({
-            rows: week.rows,
-            drawings: week.drawings || []
-          }))
-        });
-      }
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(kept));
-      memoryWeeks = weeks.filter(function (week) { return !week.example; });
-    }
-
-    async function openStoredWeeks() {
-      var saved = readStoredWeeks();
-      var opened = [];
-      var legacy = false;
-      for (var i = 0; i < saved.length; i++) {
-        var week = saved[i];
-        if (week && week.sealed) {
-          var body = JSON.parse(await openSeal(sessionPin, week.sealed));
-          opened.push({
-            id: week.id,
-            name: week.name,
-            savedAt: week.savedAt,
-            rows: body.rows || [],
-            drawings: body.drawings || []
-          });
-        } else if (week && week.rows) {
-          legacy = true;
-          opened.push(week);
-        }
-      }
-      memoryWeeks = opened;
-      if (legacy) await storeWeeks(opened);
-    }
-
     function hiddenExampleIds() {
       try {
         var saved = JSON.parse(sessionStorage.getItem(HIDE_KEY) || "[]");
@@ -631,15 +1360,71 @@
     }
 
     function weeksToShow() {
-      var hidden = hiddenExampleIds();
       var weeks = memoryWeeks.slice();
-      exampleWeeks().forEach(function (week) {
-        if (hidden.indexOf(week.id) >= 0) return;
-        var already = weeks.some(function (saved) { return saved.id === week.id; });
-        if (!already) weeks.push(week);
-      });
+      if (sampleMode) {
+        var hidden = hiddenExampleIds();
+        exampleWeeks().forEach(function (week) {
+          if (hidden.indexOf(week.id) < 0) weeks.push(week);
+        });
+      }
       weeks.sort(function (a, b) { return weekSortKey(a).localeCompare(weekSortKey(b)); });
       return weeks;
+    }
+
+    function looksLikeWeek(source) {
+      var first = String(source).replace(/^\uFEFF/, "").split(/\r?\n/)[0].toLowerCase();
+      return first.indexOf("student") >= 0 && first.indexOf("feeling") >= 0;
+    }
+
+    function mondayOf(date) {
+      var day = startOfDay(date);
+      var back = day.getDay() === 0 ? 6 : day.getDay() - 1;
+      return addDays(day, -back);
+    }
+
+    // The device keeps one CLEAR.CSV for the class. Split its rows into Monday–Friday weeks.
+    // A reply row joins its request by id, so it lands in the same week.
+    function splitWeeks(rows, source) {
+      var timeById = {};
+      function rowKey(row, index) { return (row.id || ("row-" + index)) + "\n" + (row.student || ""); }
+      rows.forEach(function (row, index) {
+        var key = rowKey(row, index);
+        if (row.time_sent && !timeById[key]) timeById[key] = row.time_sent;
+      });
+      var groups = {};
+      var order = [];
+      rows.forEach(function (row, index) {
+        var when = eventDate({ time_sent: timeById[rowKey(row, index)] || "" });
+        var key = when ? dayKey(mondayOf(when)) : "undated";
+        if (!groups[key]) { groups[key] = []; order.push(key); }
+        groups[key].push(row);
+      });
+      return order.map(function (key) {
+        var weekRows = groups[key];
+        var times = datedEvents(eventsIn(weekRows)).map(function (item) { return item.when; })
+          .sort(function (a, b) { return a - b; });
+        var week = { savedAt: new Date().toISOString(), rows: weekRows, drawings: [] };
+        if (times.length) {
+          week.id = dayKey(times[0]) + "_" + dayKey(times[times.length - 1]);
+          week.name = rangeLabel(times[0], times[times.length - 1]);
+        } else {
+          week.id = source + "-undated";
+          week.name = "Rows without a time";
+        }
+        return week;
+      }).sort(function (a, b) { return weekSortKey(a).localeCompare(weekSortKey(b)); });
+    }
+
+    function mergeWeeks(current, added) {
+      var byId = {};
+      current.forEach(function (week) { byId[week.id] = week; });
+      added.forEach(function (week) {
+        var old = byId[week.id];
+        if (old && (!week.drawings || !week.drawings.length)) week.drawings = old.drawings || [];
+        byId[week.id] = week;
+      });
+      return Object.keys(byId).map(function (id) { return byId[id]; })
+        .sort(function (a, b) { return weekSortKey(a).localeCompare(weekSortKey(b)); });
     }
 
     function setMessage(text, bad) {
@@ -1111,6 +1896,10 @@
     async function importWeekText(file, text) {
       var source = String(text || "");
       if (source.replace(/^\uFEFF/, "").trim().indexOf("CLEARENC1") === 0) {
+        if (!sessionPin) {
+          setMessage("This week is locked. Sign in with the teacher device so the class PIN can open it.", true);
+          return;
+        }
         try {
           source = await openSeal(sessionPin, source);
         } catch (err) {
@@ -1118,48 +1907,18 @@
           return;
         }
       }
-      var first = source.replace(/^\uFEFF/, "").split(/\r?\n/)[0].toLowerCase();
-      if (first.indexOf("student") < 0 || first.indexOf("feeling") < 0) {
+      if (!looksLikeWeek(source)) {
         setMessage("This file does not look like a CLEAR week. Choose CLEAR.CSV from the teacher device.", true);
         return;
       }
       var rows = parseCsv(source);
       var events = eventsIn(rows);
-      var times = datedEvents(events).map(function (item) { return item.when; }).sort(function (a, b) { return a - b; });
-      var id = file.name;
-      var name = file.name.replace(/\.csv$/i, "");
-      if (times.length) {
-        id = dayKey(times[0]) + "_" + dayKey(times[times.length - 1]);
-        name = rangeLabel(times[0], times[times.length - 1]);
-      }
-      var savedWeeks = memoryWeeks.slice();
-      var existing = savedWeeks.filter(function (week) { return week.id === id; })[0];
-      var weeks = savedWeeks.filter(function (week) { return week.id !== id; });
-      weeks.push({
-        id: id,
-        name: name,
-        savedAt: new Date().toISOString(),
-        rows: rows,
-        drawings: pendingDrawings.length
-          ? pendingDrawings
-          : (existing && existing.drawings ? existing.drawings : [])
-      });
-      weeks.sort(function (a, b) { return weekSortKey(a).localeCompare(weekSortKey(b)); });
-      try {
-        await storeWeeks(weeks);
-      } catch (err) {
-        setMessage("This browser could not keep the week and drawings. Remove older weeks or drawings and try again.", true);
-        return;
-      }
-      var drawingCount = pendingDrawings.length;
-      pendingDrawings = [];
-      document.getElementById("drawings").value = "";
-      var message = name + " is on the page. " + events.length +
+      var added = splitWeeks(rows, file.name);
+      memoryWeeks = mergeWeeks(memoryWeeks, added);
+      var message = added.map(function (week) { return week.name; }).join(", ") +
+        (added.length === 1 ? " is" : " are") + " on the page. " + events.length +
         (events.length === 1 ? " selection." : " selections.");
-      if (drawingCount) {
-        message += " " + drawingCount + (drawingCount === 1 ? " drawing was" : " drawings were") + " saved with the week.";
-      }
-      setMessage(message, false);
+      setMessage(message + " It is cleared when the page is locked or closed.", false);
       render();
     }
 
@@ -1264,7 +2023,7 @@
       document.getElementById("hours").innerHTML = "<h2>Time of day</h2>" + columns(hourItems);
       document.getElementById("effect").innerHTML =
         "<h2>Did it help?</h2>" +
-        "<p class='week-note'>Across the weeks on this page. Teal is Yes. Gray is Not yet.</p>" +
+        "<p class='week-note'>Across the weeks on this page. Cream is Yes. Gray is Not yet.</p>" +
         effectBars(feedbackEvents);
       document.getElementById("feelings").innerHTML = "<h2>Feelings to watch</h2>" + bars(feelings.slice(0, 6), false);
       document.getElementById("kinds").innerHTML =
@@ -1337,13 +2096,8 @@
             sessionStorage.setItem(HIDE_KEY, JSON.stringify(nextHidden));
             setMessage(week.name + " is hidden until this page is opened again.", false);
           } else {
-            storeWeeks(memoryWeeks.filter(function (saved) { return saved.id !== week.id; })).then(function () {
-              setMessage(week.name + " was removed from this browser.", false);
-              render();
-            }).catch(function () {
-              setMessage("This browser could not update the saved weeks.", true);
-            });
-            return;
+            memoryWeeks = memoryWeeks.filter(function (saved) { return saved.id !== week.id; });
+            setMessage(week.name + " was removed from this page. It is still on the teacher device.", false);
           }
           render();
         });
@@ -1356,7 +2110,6 @@
         document.getElementById("student-pick").innerHTML = "";
         document.getElementById("student-detail").innerHTML = "";
         document.getElementById("recent").innerHTML = "";
-        document.getElementById("drawing-gallery").innerHTML = "";
         return;
       }
       renderStudentView(weeks, events, feedbackEvents);
@@ -1372,35 +2125,13 @@
         picks.appendChild(button);
       });
       studentBox.appendChild(picks);
-      renderDrawingGallery(weeks);
     }
 
     var fileInput = document.getElementById("file");
-    var drawingInput = document.getElementById("drawings");
     var drop = document.getElementById("drop");
     fileInput.addEventListener("change", function () {
       takeFile(fileInput.files && fileInput.files[0]);
       fileInput.value = "";
-    });
-    drawingInput.addEventListener("change", function () {
-      var files = Array.prototype.slice.call(drawingInput.files || []);
-      if (!files.length) {
-        pendingDrawings = [];
-        drawingsReady = true;
-        drawingReadPromise = Promise.resolve();
-        return;
-      }
-      var totalBytes = files.reduce(function (total, file) {
-        return total + file.size;
-      }, 0);
-      if (files.length > 64 || totalBytes > 1500000) {
-        pendingDrawings = [];
-        drawingsReady = false;
-        drawingReadPromise = Promise.resolve();
-        setMessage("Choose no more than 64 drawing files totaling 1.5 MB.", true);
-        return;
-      }
-      readDrawingFiles(files);
     });
     document.getElementById("summary").addEventListener("click", function (event) {
       var button = event.target.closest && event.target.closest("#overview-download");
@@ -1426,9 +2157,6 @@
       scrollStudent = true;
       render();
     });
-    document.getElementById("drawing-student").addEventListener("change", function () {
-      renderDrawingGallery(weeksToShow());
-    });
     ["dragenter", "dragover"].forEach(function (name) {
       drop.addEventListener(name, function (event) {
         event.preventDefault();
@@ -1446,14 +2174,8 @@
       takeFile(file);
     });
 
-    var TEST_PIN = "1234";
-
     function fourDigits(value) {
       return /^[0-9]{4}$/.test(value);
-    }
-
-    function testPin(pin) {
-      return pin === TEST_PIN;
     }
 
     function setGateMessage(text, bad) {
@@ -1469,36 +2191,266 @@
         namesHidden = true;
         document.body.classList.add("names-hidden");
         render();
-      }, 10000);
+      }, 5 * 60 * 1000);
     }
 
-    async function enterPage(pin) {
-      sessionPin = pin;
+    // ── Teacher device over USB (Web Serial) ──
+    // Protocol, one line per command at 115200 baud (see CLEAR_WebLink.h):
+    //   HELLO -> CLEAR TEACHER 1     AUTH <pin> <code> -> OK | NO | WAIT
+    //   CSV   -> FILE <n> + n bytes | NONE      BYE -> OK
+    var teacherLink = null;
+    var linkBusy = false;
+    var USB_FILTERS = [
+      { usbVendorId: 0x1a86 },  // WCH CH340 (CYD boards)
+      { usbVendorId: 0x10c4 },  // Silicon Labs CP210x
+      { usbVendorId: 0x0403 },  // FTDI
+      { usbVendorId: 0x303a }   // Espressif native USB
+    ];
+    var DEVICE_TEXT = {
+      checking: ["Looking for the teacher device…", "Checking USB devices this browser can use."],
+      first: ["Connect the teacher device", "Plug it in with USB, then choose Connect teacher device. After the first time, this page finds it on its own."],
+      missing: ["No teacher device found", "Plug the teacher device in with USB. This page will notice when it arrives."],
+      connected: ["Teacher device connected", "Enter the class PIN and teacher code set on this device."],
+      unsupported: ["This browser cannot reach USB", "Open this page in Chrome or Edge from a local address, like localhost."]
+    };
+
+    function setDeviceState(state) {
+      document.getElementById("device-box").setAttribute("data-state", state);
+      document.getElementById("device-title").textContent = DEVICE_TEXT[state][0];
+      document.getElementById("device-text").textContent = DEVICE_TEXT[state][1];
+      document.getElementById("device-connect").hidden =
+        state === "connected" || state === "unsupported" || state === "checking";
+      document.getElementById("device-reload").disabled = state !== "connected";
+    }
+
+    function waitMs(ms) {
+      return new Promise(function (resolve) { setTimeout(resolve, ms); });
+    }
+
+    // Opening the port can leave this ESP32 in the boot program, which
+    // does not answer. Pulse reset with the boot pin released so the
+    // teacher sketch starts, then listen.
+    async function runSketch(port) {
       try {
-        await openStoredWeeks();
-      } catch (err) {
-        memoryWeeks = [];
-        if (testPin(pin)) {
-          setMessage("Test password 1234 opened the page. Saved weeks stay locked with the class PIN.", true);
-        } else {
-          setMessage("The class PIN did not open the saved weeks.", true);
+        await port.setSignals({ dataTerminalReady: false, requestToSend: true });
+        await waitMs(120);
+        await port.setSignals({ dataTerminalReady: false, requestToSend: false });
+      } catch (err) {}
+      await waitMs(250);
+    }
+
+    async function openLink(port) {
+      await port.open({ baudRate: 115200, bufferSize: 4096 });
+      var link = {
+        port: port, buf: new Uint8Array(0), wake: null, closed: false, bytes: 0,
+        reader: port.readable.getReader(), writer: port.writable.getWriter()
+      };
+      (async function () {
+        try {
+          while (true) {
+            var read = await link.reader.read();
+            if (read.done) break;
+            var joined = new Uint8Array(link.buf.length + read.value.length);
+            joined.set(link.buf);
+            joined.set(read.value, link.buf.length);
+            link.buf = joined;
+            link.bytes += read.value.length;
+            if (link.wake) link.wake();
+          }
+        } catch (err) {}
+        link.closed = true;
+        if (link.wake) link.wake();
+      })();
+      return link;
+    }
+
+    function waitForData(link, ms) {
+      return new Promise(function (resolve) {
+        var timer = setTimeout(function () { link.wake = null; resolve(); }, ms);
+        link.wake = function () { clearTimeout(timer); link.wake = null; resolve(); };
+      });
+    }
+
+    async function linkLine(link, ms) {
+      var end = Date.now() + ms;
+      while (true) {
+        var cut = link.buf.indexOf(10);
+        if (cut >= 0) {
+          var line = textDecoder.decode(link.buf.slice(0, cut)).replace(/\r$/, "");
+          link.buf = link.buf.slice(cut + 1);
+          return line;
+        }
+        var left = end - Date.now();
+        if (left <= 0 || link.closed) return null;
+        await waitForData(link, left);
+      }
+    }
+
+    async function linkBytes(link, count, ms) {
+      var end = Date.now() + ms;
+      while (link.buf.length < count) {
+        var left = end - Date.now();
+        if (left <= 0 || link.closed) return null;
+        await waitForData(link, left);
+      }
+      var out = link.buf.slice(0, count);
+      link.buf = link.buf.slice(count);
+      return out;
+    }
+
+    // Send one command and wait for a reply line that matches. Other lines are
+    // debug prints from the sketch, so they are skipped.
+    async function linkAsk(link, command, pattern, ms) {
+      link.buf = new Uint8Array(0);
+      await link.writer.write(textEncoder.encode(command + "\n"));
+      var end = Date.now() + ms;
+      while (true) {
+        var line = await linkLine(link, end - Date.now());
+        if (line === null) return null;
+        if (pattern.test(line)) return line;
+      }
+    }
+
+    async function closeLink(link) {
+      try { await link.reader.cancel(); } catch (err) {}
+      try { link.reader.releaseLock(); } catch (err) {}
+      try { link.writer.releaseLock(); } catch (err) {}
+      try { await link.port.close(); } catch (err) {}
+    }
+
+    async function hearTeacher(link) {
+      var end = Date.now() + 12000;
+      while (Date.now() < end) {
+        if (await linkAsk(link, "HELLO", /^CLEAR TEACHER\b/, 800)) return true;
+        if (link.closed) return false;
+      }
+      return false;
+    }
+
+    async function tryTeacherPort(port) {
+      if (teacherLink) return true;
+      var link;
+      try { link = await openLink(port); } catch (err) { return false; }
+      await runSketch(port);
+      if (await hearTeacher(link)) {
+        teacherLink = link;
+        setDeviceState("connected");
+        document.dispatchEvent(new CustomEvent("clear:device", { detail: "connected" }));
+        return true;
+      }
+      // Some cables only pass data after the same signal the serial
+      // monitor uses. One more reset, then listen again.
+      if (!link.closed && link.bytes === 0) {
+        try {
+          await port.setSignals({ dataTerminalReady: true, requestToSend: false });
+          await waitMs(150);
+          await port.setSignals({ dataTerminalReady: false, requestToSend: false });
+        } catch (err) {}
+        if (await hearTeacher(link)) {
+          teacherLink = link;
+          setDeviceState("connected");
+          document.dispatchEvent(new CustomEvent("clear:device", { detail: "connected" }));
+          return true;
         }
       }
+      await closeLink(link);
+      return false;
+    }
+
+    async function findTeacherDevice() {
+      if (!navigator.serial) { setDeviceState("unsupported"); return; }
+      setDeviceState("checking");
+      var ports = [];
+      try { ports = await navigator.serial.getPorts(); } catch (err) {}
+      for (var i = 0; i < ports.length; i++) {
+        if (await tryTeacherPort(ports[i])) return;
+      }
+      setDeviceState(ports.length ? "missing" : "first");
+    }
+
+    if (navigator.serial) {
+      navigator.serial.addEventListener("connect", function (event) {
+        if (teacherLink) return;
+        setDeviceState("checking");
+        tryTeacherPort(event.target).then(function (ok) {
+          if (!ok && !teacherLink) setDeviceState("missing");
+        });
+      });
+      navigator.serial.addEventListener("disconnect", function (event) {
+        if (!teacherLink || event.target !== teacherLink.port) return;
+        var old = teacherLink;
+        teacherLink = null;
+        closeLink(old);
+        setDeviceState("missing");
+        document.dispatchEvent(new CustomEvent("clear:device", { detail: "gone" }));
+      });
+    }
+
+    document.getElementById("device-connect").addEventListener("click", function () {
+      navigator.serial.requestPort({ filters: USB_FILTERS }).then(function (port) {
+        setDeviceState("checking");
+        return tryTeacherPort(port);
+      }).then(function (ok) {
+        if (ok) { setGateMessage("", false); return; }
+        setDeviceState("missing");
+        setGateMessage("The computer sees the board, but it sent nothing back. Upload the teacher sketch, press the board's reset button, then choose Connect teacher device again.", true);
+      }).catch(function () {
+        // The picker was closed without choosing a device.
+      });
+    });
+
+    // Ask the device to check the codes, then read its week.
+    async function loadFromDevice(pin, code) {
+      if (!teacherLink) return { bad: true, text: "Connect the teacher device first. Plug it in with USB." };
+      if (linkBusy) return { bad: true, text: "The teacher device is still busy. Try again in a moment." };
+      linkBusy = true;
+      try {
+        var link = teacherLink;
+        var auth = await linkAsk(link, "AUTH " + pin + " " + code, /^(OK|NO|WAIT)$/, 4000);
+        if (!auth) return { bad: true, text: "The teacher device did not answer. Unplug it, plug it back in, and try again." };
+        if (auth === "NO") return { bad: true, text: "Those codes do not match the connected teacher device." };
+        if (auth === "WAIT") return { bad: true, text: "Too many tries. The teacher device is waiting a minute before it takes codes again." };
+
+        var head = await linkAsk(link, "CSV", /^(FILE \d+|NONE|NO AUTH)$/, 5000);
+        if (!head || head === "NO AUTH") return { bad: true, text: "The teacher device did not send its week. Try again." };
+        var weeks = [];
+        if (head !== "NONE") {
+          var size = Number(head.slice(5));
+          if (size > 4000000) return { bad: true, text: "The week on the teacher device is too large to open here." };
+          var bytes = await linkBytes(link, size, 15000 + size / 4);
+          if (!bytes) return { bad: true, text: "The week stopped partway through. Check the cable, then reload from the teacher device." };
+          var source = textDecoder.decode(bytes);
+          if (source.replace(/^﻿/, "").trim().indexOf("CLEARENC1") === 0) {
+            try {
+              source = await openSeal(pin, source);
+            } catch (err) {
+              return { bad: true, text: "The class PIN did not open the week saved on the teacher device." };
+            }
+          }
+          if (!looksLikeWeek(source)) return { bad: true, text: "The file on the teacher device does not look like a CLEAR week." };
+          weeks = splitWeeks(parseCsv(source), "device");
+        }
+        var count = 0;
+        weeks.forEach(function (week) {
+          count += eventsIn(week.rows).filter(function (event) { return !isFeedback(event); }).length;
+        });
+        var text = weeks.length
+          ? "Loaded " + weeks.length + (weeks.length === 1 ? " week" : " weeks") + " from the teacher device. " +
+            count + (count === 1 ? " selection." : " selections.")
+          : "The teacher device has no saved week yet.";
+        return { weeks: weeks, text: text };
+      } finally {
+        linkBusy = false;
+      }
+    }
+
+    function enterPage() {
       document.getElementById("gate").hidden = true;
       namesHidden = false;
       document.body.classList.remove("names-hidden");
       render();
       armIdle();
     }
-
-    function showGateCopy() {
-      if (!readSecrets()) return;
-      document.getElementById("gate-help").textContent =
-        "Enter the class PIN and the teacher code for this browser.";
-      document.getElementById("gate-submit").textContent = "Open the week";
-    }
-
-    showGateCopy();
 
     document.getElementById("gate-form").addEventListener("submit", function (event) {
       event.preventDefault();
@@ -1508,91 +2460,99 @@
         setGateMessage("Use four digits for each code.", true);
         return;
       }
-      var secrets = readSecrets();
-      if (!secrets) {
-        var salt = crypto.getRandomValues(new Uint8Array(16));
-        pinCheck(pin, salt).then(function (pinHash) {
-          return pinCheck(code, salt).then(function (codeHash) {
-            localStorage.setItem(SECRET_KEY, JSON.stringify({
-              salt: bytesToB64(salt),
-              pin: pinHash,
-              code: codeHash
-            }));
-            return enterPage(pin);
-          });
-        }).catch(function () {
-          setGateMessage("This browser could not save the check for those codes.", true);
-        });
+      if (!teacherLink) {
+        setGateMessage(navigator.serial
+          ? "Connect the teacher device first. Plug it in with USB."
+          : "This browser cannot reach the teacher device. Open this page in Chrome or Edge.", true);
         return;
       }
-      var saltBytes = b64ToBytes(secrets.salt);
-      pinCheck(pin, saltBytes).then(function (pinHash) {
-        return pinCheck(code, saltBytes).then(function (codeHash) {
-          if ((pinHash !== secrets.pin && !testPin(pin)) || codeHash !== secrets.code) {
-            setGateMessage("Those codes do not match this browser.", true);
-            return;
-          }
-          return enterPage(pin);
-        });
+      setGateMessage("Checking the codes with the teacher device…", false);
+      loadFromDevice(pin, code).then(function (result) {
+        if (result.bad) { setGateMessage(result.text, true); return; }
+        sessionPin = pin;
+        sessionCode = code;
+        sampleMode = false;
+        memoryWeeks = result.weeks;
+        document.getElementById("gate-pin").value = "";
+        document.getElementById("gate-code").value = "";
+        setGateMessage("", false);
+        enterPage();
+        setMessage(result.text, false);
       }).catch(function () {
-        setGateMessage("This browser could not check those codes.", true);
+        setGateMessage("Something went wrong reading the teacher device. Unplug it, plug it back in, and try again.", true);
       });
     });
 
-    document.getElementById("gate-delete").addEventListener("click", function () {
-      localStorage.removeItem(STORAGE_KEY);
+    document.getElementById("gate-sample").addEventListener("click", function () {
+      sampleMode = true;
+      sessionPin = "";
+      sessionCode = "";
       memoryWeeks = [];
-      setGateMessage("Saved weeks were deleted from this browser.", false);
-      if (document.getElementById("gate").hidden) render();
+      setGateMessage("", false);
+      enterPage();
+      setMessage("This is a sample class, not real students. Sign in with the teacher device to see your class.", false);
+    });
+
+    document.getElementById("device-reload").addEventListener("click", function () {
+      if (sampleMode || !sessionPin) {
+        setMessage("Lock the page, then sign in with the teacher device to load your class.", true);
+        return;
+      }
+      setMessage("Reading the teacher device…", false);
+      loadFromDevice(sessionPin, sessionCode).then(function (result) {
+        if (result.bad) { setMessage(result.text, true); return; }
+        memoryWeeks = mergeWeeks(memoryWeeks, result.weeks);
+        setMessage(result.text, false);
+        render();
+      }).catch(function () {
+        setMessage("Something went wrong reading the teacher device. Check the cable and try again.", true);
+      });
     });
 
     document.getElementById("lock-page").addEventListener("click", function () {
+      if (teacherLink && sessionPin && !linkBusy) {
+        linkAsk(teacherLink, "BYE", /^OK$/, 1500).catch(function () {});
+      }
       sessionPin = "";
+      sessionCode = "";
+      sampleMode = false;
       memoryWeeks = [];
+      pendingDrawings = [];
       namesHidden = false;
       document.body.classList.remove("names-hidden");
       clearTimeout(idleTimer);
       document.getElementById("gate").hidden = false;
       document.getElementById("gate-pin").value = "";
       document.getElementById("gate-code").value = "";
-      showGateCopy();
-      document.getElementById("summary").innerHTML = "";
-      document.getElementById("days").innerHTML = "";
-      document.getElementById("hours").innerHTML = "";
-      document.getElementById("kinds").innerHTML = "";
-      document.getElementById("feelings").innerHTML = "";
-      document.getElementById("effect").innerHTML = "";
-      document.getElementById("students").innerHTML = "";
-      document.getElementById("student-pick").innerHTML = "";
-      document.getElementById("student-detail").innerHTML = "";
-      document.getElementById("recent").innerHTML = "";
-      document.getElementById("drawing-gallery").innerHTML = "";
-      document.getElementById("weeks").innerHTML = "";
+      document.getElementById("message").textContent = "";
+      ["summary", "days", "hours", "kinds", "feelings", "effect", "students", "student-pick",
+       "student-detail", "recent", "weeks"].forEach(function (id) {
+        document.getElementById(id).innerHTML = "";
+      });
     });
 
     document.getElementById("cover-show").addEventListener("click", function () {
       var pin = document.getElementById("cover-pin").value.trim();
-      var secrets = readSecrets();
       var message = document.getElementById("cover-message");
-      if (!secrets || !fourDigits(pin)) {
+      if (!fourDigits(pin)) {
         message.textContent = "Enter the four-digit class PIN.";
         message.className = "message bad";
         return;
       }
-      pinCheck(pin, b64ToBytes(secrets.salt)).then(function (hash) {
-        if (hash !== secrets.pin && !testPin(pin)) {
-          message.textContent = "That class PIN does not match.";
-          message.className = "message bad";
-          return;
-        }
-        namesHidden = false;
-        document.body.classList.remove("names-hidden");
-        document.getElementById("cover-pin").value = "";
-        message.textContent = "";
-        render();
-        armIdle();
-      });
+      if (!sampleMode && pin !== sessionPin) {
+        message.textContent = "That class PIN does not match.";
+        message.className = "message bad";
+        return;
+      }
+      namesHidden = false;
+      document.body.classList.remove("names-hidden");
+      document.getElementById("cover-pin").value = "";
+      message.textContent = "";
+      render();
+      armIdle();
     });
+
+    findTeacherDevice();
 
     ["pointerdown", "keydown"].forEach(function (name) {
       document.addEventListener(name, function () {
@@ -1758,6 +2718,25 @@
         close: function () { return port.close(); }
       });
     }
+    async function openPanelCharacteristic(device) {
+      let last = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          await device.gatt.connect();
+          await new Promise(function (resolve) { setTimeout(resolve, 350); });
+          if (!device.gatt.connected) await device.gatt.connect();
+          const service = await device.gatt.getPrimaryService(PANEL_SERVICE);
+          return await service.getCharacteristic(PANEL_CHAR);
+        } catch (err) {
+          last = err;
+          try { device.gatt.disconnect(); } catch (ignore) {}
+          await new Promise(function (resolve) { setTimeout(resolve, 500); });
+        }
+      }
+      const failed = new Error("The panel dropped the Bluetooth link before settings could open. Stay close to the panel and choose Connect Bluetooth again.");
+      failed.cause = last;
+      throw failed;
+    }
     async function connectBle() {
       if (!navigator.bluetooth) {
         panelStatus("This browser cannot open Bluetooth from the page. Use Chrome or Edge on a local address.", true);
@@ -1767,17 +2746,44 @@
         filters: [{ name: "CLEAR panel" }],
         optionalServices: [PANEL_SERVICE]
       });
-      const server = await device.gatt.connect();
-      const service = await server.getPrimaryService(PANEL_SERVICE);
-      const characteristic = await service.getCharacteristic(PANEL_CHAR);
+      const characteristic = await openPanelCharacteristic(device);
       const queue = lineQueue();
-      characteristic.addEventListener("characteristicvaluechanged", function (event) {
-        queue.push(new TextDecoder().decode(event.target.value).trim());
-      });
-      await characteristic.startNotifications();
       const encoder = new TextEncoder();
+      let current = characteristic;
+      function hear(event) {
+        queue.push(new TextDecoder().decode(event.target.value).trim());
+      }
+      current.addEventListener("characteristicvaluechanged", hear);
+      await current.startNotifications();
+      async function reopen() {
+        if (current) current.removeEventListener("characteristicvaluechanged", hear);
+        current = await openPanelCharacteristic(device);
+        current.addEventListener("characteristicvaluechanged", hear);
+        await current.startNotifications();
+      }
+      async function writeLine(line) {
+        const data = encoder.encode(line);
+        let last = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            if (!device.gatt.connected) await reopen();
+            if (current.properties.writeWithoutResponse) {
+              await current.writeValueWithoutResponse(data);
+            } else {
+              await current.writeValue(data);
+            }
+            return;
+          } catch (err) {
+            last = err;
+            try { device.gatt.disconnect(); } catch (ignore) {}
+            await new Promise(function (resolve) { setTimeout(resolve, 600); });
+            try { await reopen(); } catch (ignore) {}
+          }
+        }
+        throw last || new Error("The panel dropped the Bluetooth link. Stay close to it and choose Connect Bluetooth again.");
+      }
       await useLink({
-        write: function (line) { return characteristic.writeValue(encoder.encode(line)); },
+        write: writeLine,
         next: queue.next,
         close: function () { device.gatt.disconnect(); }
       });
